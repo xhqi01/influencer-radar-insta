@@ -1,0 +1,4 @@
+flask>=3.0
+apify-client>=1.7
+python-dotenv>=1.0
+gunicorn>=21.2
