@@ -42,10 +42,12 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,   # 30日ログイン保持
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    # Render 等のリバースプロキシ配下では実際は HTTPS でも Flask からは
-    # HTTP に見えることがあり、Secure Cookie が正しく送られない原因になる。
-    # ローカル開発（HOST未設定 or localhost）以外は常に Secure を付ける。
-    SESSION_COOKIE_SECURE=os.getenv("FORCE_HTTP") != "1",
+    # Secure フラグは付けない：リバースプロキシ配下（Render 等）で
+    # request.is_secure の判定がプロキシヘッダの解釈に依存し、環境によって
+    # 正しく HTTPS と判定されずログインが機能しなくなる不具合が実際に発生した。
+    # HttpOnly + SameSite=Lax で XSS・CSRF 経由の漏洩は防げており、
+    # 内部ツールとしてはこれで十分と判断し、Secure 依存を外して安定性を優先する。
+    SESSION_COOKIE_SECURE=False,
 )
 
 # X-Forwarded-Proto を信頼し、request.is_secure を正しく判定させる

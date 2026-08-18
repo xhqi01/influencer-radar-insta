@@ -20,8 +20,10 @@ pre-groups legacy data, and users in no group see and touch nothing. Search now
 requires an active group. Multi-hashtag search (up to 5 tags) with union /
 intersect modes, wired into the AI brief parser. Profile avatars in results,
 database, and detail panel, with automatic letter fallback for expired image
-URLs. CSV gains a matched-hashtags column. Fixed: login cookies behind reverse
-proxies (ProxyFix + explicit credentials), Apify SDK 3.x Run-object
+URLs. CSV gains a matched-hashtags column. Fixed: a login bug where the session cookie's Secure flag, combined with
+how Render's reverse proxy reports HTTPS, silently prevented the browser
+from keeping the cookie — registering or logging in appeared to do nothing.
+Also fixed: Apify SDK 3.x Run-object
 compatibility, and pipeline diagnostics that name the exact filter that zeroed
 out a search.
 
@@ -30,8 +32,9 @@ out a search.
 旧数据、未加入小组的用户什么都看不到也改不了。搜索现在要求先加入小组。多标签
 搜索（最多5个）支持并集/交集两种模式，AI 自由文解析也会自动判断用哪种。搜索
 结果、数据库、详情面板均显示头像，图片链接失效时自动退化为首字母占位。CSV 新增
-"匹配标签"列。修复：反向代理后登录 cookie 失效问题（ProxyFix + 显式凭据）、
-Apify SDK 3.x Run 对象兼容性、以及能精确指出是哪个筛选条件把结果清零的诊断日志。
+"匹配标签"列。修复：登录 cookie 的 Secure 标记和 Render 反向代理上报 HTTPS 的方式
+对不上，导致浏览器悄悄丢弃登录 cookie——表现为点注册或登录后像是没反应。
+另外还修复了 Apify SDK 3.x 的 Run 对象兼容性、以及能精确指出是哪个筛选条件把结果清零的诊断日志。
 
 **日本語** — アカウントとワークグループ：ユーザー名／パスワードによるログイン
 （セッション30日保持）、ワンクリックでコピーできる招待コード、リスト／フォルダの
