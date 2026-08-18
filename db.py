@@ -341,11 +341,11 @@ def get_job(job_id, with_results=False):
         return job
 
 
-def recent_jobs(limit=15):
+def recent_jobs(limit=15, group_id=None):
     with connect() as c:
         rows = c.execute(
             "SELECT id,status,params,stats,created_at,created_by FROM jobs "
-            "ORDER BY created_at DESC LIMIT ?", (limit,)
+            "WHERE group_id IS ? ORDER BY created_at DESC LIMIT ?", (group_id, limit)
         ).fetchall()
     out = []
     for r in rows:

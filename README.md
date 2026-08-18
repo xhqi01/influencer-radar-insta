@@ -11,6 +11,42 @@ database over time. Flask + SQLite, with an English / 中文 / 日本語 UI.
 
 ---
 
+## What's new in this version ｜ 本次更新 ｜ 今回の更新
+
+**EN** — Accounts & workgroups: username/password login (30-day sessions),
+groups with one-click-copy invite codes, lists/folders strictly isolated per
+group (search history and result exports too), the first group created adopts
+pre-groups legacy data, and users in no group see and touch nothing. Search now
+requires an active group. Multi-hashtag search (up to 5 tags) with union /
+intersect modes, wired into the AI brief parser. Profile avatars in results,
+database, and detail panel, with automatic letter fallback for expired image
+URLs. CSV gains a matched-hashtags column. Fixed: login cookies behind reverse
+proxies (ProxyFix + explicit credentials), Apify SDK 3.x Run-object
+compatibility, and pipeline diagnostics that name the exact filter that zeroed
+out a search.
+
+**中文** — 账号与工作小组：用户名/密码登录（会话保持30天）、小组邀请码一键复制、
+名单/文件夹按组严格隔离（搜索历史和结果导出同样隔离）、第一个创建的小组自动接收
+旧数据、未加入小组的用户什么都看不到也改不了。搜索现在要求先加入小组。多标签
+搜索（最多5个）支持并集/交集两种模式，AI 自由文解析也会自动判断用哪种。搜索
+结果、数据库、详情面板均显示头像，图片链接失效时自动退化为首字母占位。CSV 新增
+"匹配标签"列。修复：反向代理后登录 cookie 失效问题（ProxyFix + 显式凭据）、
+Apify SDK 3.x Run 对象兼容性、以及能精确指出是哪个筛选条件把结果清零的诊断日志。
+
+**日本語** — アカウントとワークグループ：ユーザー名／パスワードによるログイン
+（セッション30日保持）、ワンクリックでコピーできる招待コード、リスト／フォルダの
+グループ単位での厳格な分離（検索履歴と結果エクスポートも同様）、最初に作られた
+グループによる旧データの自動引き取り、グループ未所属ユーザーは何も見えず何も
+触れない設計。検索はグループ所属が必須になった。複数ハッシュタグ検索（最大5個）
+は和集合／積集合の2モードに対応し、AI 自由文解析でも自動判定される。検索結果・
+データベース・詳細パネルにアバターを表示し、画像 URL の期限切れ時は頭文字の
+プレースホルダに自動で切り替わる。CSV に「マッチしたハッシュタグ」列を追加。
+修正：リバースプロキシ配下でのログイン Cookie 問題（ProxyFix + 明示的な資格情報
+送信）、Apify SDK 3.x の Run オブジェクト互換性、どの絞り込み条件で結果がゼロに
+なったかを特定できる診断ログ。
+
+---
+
 ## Quick start
 
 ```bash

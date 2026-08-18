@@ -1306,7 +1306,7 @@ const tokens = {
 const hasAI = () => !!tokens.anthropic();
 
 async function api(url, opts={}){
-  const r = await fetch(url, {headers:{
+  const r = await fetch(url, {credentials:"same-origin", headers:{
     "Content-Type":"application/json",
     "X-Apify-Token":tokens.apify(),
     "X-Anthropic-Key":tokens.anthropic(),
@@ -1403,7 +1403,7 @@ $("grpJoinBtn").onclick = async ()=>{
 /* ---------- 起動 ---------- */
 async function boot(){
   try{
-    ME = await fetch("/api/me").then(r=> r.ok ? r.json() : null);
+    ME = await fetch("/api/me", {credentials:"same-origin"}).then(r=> r.ok ? r.json() : null);
   }catch(_){ ME = null; }
   if (!ME){ showAuth(true); return; }
   showAuth(false);
@@ -1539,6 +1539,7 @@ $("runBtn").onclick = async ()=>{
   const usernames = $("usernames").value.split(/[\n,]/).map(s=>s.trim().replace(/^@/,"")).filter(Boolean);
   $("runMsg").textContent = "";
   if (!tokens.apify()){ $("runMsg").textContent = t().errNoToken; $("setupBtn").focus(); return; }
+  if (!ME || !ME.groups.length){ $("runMsg").textContent = t().grpErr.no_group; renderGroupDlg(); $("groupDlg").showModal(); return; }
   if (!hashtags.length && !usernames.length){ $("runMsg").textContent = t().errNoHashtag; return; }
   const p = {
     hashtags, hashtag_mode: HASHTAG_MODE, usernames,

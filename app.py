@@ -42,7 +42,16 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,   # 30日ログイン保持
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    # Render 等のリバースプロキシ配下では実際は HTTPS でも Flask からは
+    # HTTP に見えることがあり、Secure Cookie が正しく送られない原因になる。
+    # ローカル開発（HOST未設定 or localhost）以外は常に Secure を付ける。
+    SESSION_COOKIE_SECURE=os.getenv("FORCE_HTTP") != "1",
 )
+
+# X-Forwarded-Proto を信頼し、request.is_secure を正しく判定させる
+# （プロキシ配下で HTTPS 判定が狂うと、Secure Cookie が保存されない）
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +256,8 @@ def api_search():
     anthropic_key = (request.headers.get("X-Anthropic-Key") or "").strip()
     if not apify_token:
         return jsonify({"error": "no_apify_token"}), 400
+    if current_group_id() is None:
+        return jsonify({"error": "no_group"}), 400
 
     job_id = uuid.uuid4().hex[:12]
     gid = current_group_id()   # スレッド内では session に触れないため、ここで確定させる
@@ -291,7 +302,7 @@ def api_search():
 @app.route("/api/status/<job_id>")
 def api_status(job_id):
     job = db.get_job(job_id, with_results=True)
-    if not job:
+    if not job or job.get("group_id") != current_group_id():
         return jsonify({"error": "not_found"}), 404
     return jsonify({
         "status": job["status"],
@@ -304,13 +315,13 @@ def api_status(job_id):
 
 @app.route("/api/jobs")
 def api_jobs():
-    return jsonify({"jobs": db.recent_jobs()})
+    return jsonify({"jobs": db.recent_jobs(group_id=current_group_id())})
 
 
 @app.route("/api/export/job/<job_id>")
 def api_export_job(job_id):
     job = db.get_job(job_id, with_results=True)
-    if not job or not job.get("results"):
+    if not job or job.get("group_id") != current_group_id() or not job.get("results"):
         return jsonify({"error": "no_results"}), 404
     p = job["params"] or {}
     tags = p.get("hashtags") or ([p["hashtag"]] if p.get("hashtag") else ["search"])
@@ -350,16 +361,24 @@ def api_account_detail(username):
 # フォルダ
 # ---------------------------------------------------------------------------
 def owned_list(list_id):
-    """アクティブグループに属するリストのみ返す（他グループのIDを弾く）。"""
+    """アクティブグループに属するリストのみ返す（他グループのIDを弾く）。
+    グループ未所属(None)では常に None：group_id が NULL のままの
+    レガシーデータを、無所属ユーザー同士の共有空間にしないため。"""
+    gid = current_group_id()
+    if gid is None:
+        return None
     meta = db.get_list(list_id)
-    if meta and meta.get("group_id") == current_group_id():
+    if meta and meta.get("group_id") == gid:
         return meta
     return None
 
 
 def owned_folder(folder_id):
+    gid = current_group_id()
+    if gid is None:
+        return None
     f = db.get_folder(folder_id)
-    if f and f.get("group_id") == current_group_id():
+    if f and f.get("group_id") == gid:
         return f
     return None
 
@@ -367,7 +386,10 @@ def owned_folder(folder_id):
 @app.route("/api/tree")
 def api_tree():
     """フォルダ + リストの構造をまとめて返す（左ナビ用）。"""
-    return jsonify(db.tree(current_group_id()))
+    gid = current_group_id()
+    if gid is None:
+        return jsonify({"folders": [], "loose": [], "total": 0})
+    return jsonify(db.tree(gid))
 
 
 @app.route("/api/folders", methods=["POST"])
@@ -424,14 +446,20 @@ def api_move_list(list_id):
 @app.route("/api/saved")
 def api_saved():
     """全リスト横断で保存済みの人を探す。?q= で絞り込み。"""
-    return jsonify({"items": db.find_saved(request.args.get("q", "").strip(), group_id=current_group_id())})
+    gid = current_group_id()
+    if gid is None:
+        return jsonify({"items": []})
+    return jsonify({"items": db.find_saved(request.args.get("q", "").strip(), group_id=gid)})
 
 
 @app.route("/api/saved/map", methods=["POST"])
 def api_saved_map():
     """検索結果に『保存済み』バッジを出すための {username: [リスト名]} を返す。"""
     payload = request.get_json(silent=True) or {}
-    return jsonify({"map": db.saved_map(payload.get("usernames") or [], group_id=current_group_id())})
+    gid = current_group_id()
+    if gid is None:
+        return jsonify({"map": {}})
+    return jsonify({"map": db.saved_map(payload.get("usernames") or [], group_id=gid)})
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +468,8 @@ def api_saved_map():
 @app.route("/api/lists", methods=["GET", "POST"])
 def api_lists():
     if request.method == "GET":
-        return jsonify({"lists": db.all_lists(current_group_id())})
+        gid = current_group_id()
+        return jsonify({"lists": db.all_lists(gid) if gid is not None else []})
 
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
@@ -500,7 +529,8 @@ def api_add_items(list_id):
 
 @app.route("/api/items/<int:item_id>", methods=["PATCH", "DELETE"])
 def api_item(item_id):
-    if db.item_group(item_id) != current_group_id():
+    gid = current_group_id()
+    if gid is None or db.item_group(item_id) != gid:
         return jsonify({"error": "not_found"}), 404
     if request.method == "DELETE":
         db.delete_item(item_id)
