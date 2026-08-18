@@ -12,7 +12,9 @@ import json
 import os
 import re
 import sys
+import threading
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from apify_client import ApifyClient
@@ -64,6 +66,16 @@ BRIEF_SCHEMA = """{
   "narration_only": true | false,
   "min_engagement": 数値（%。指定がなければ0）,
   "content_keywords": ["投稿内容の絞り込みキーワード"],
+  "profile_keyword": "プロフィール(bio)に含まれる語。指定が無ければ空文字",
+  "caption_keyword": "キャプションに含まれる語。指定が無ければ空文字",
+  "mention": "キャプション内で @メンションされているアカウント名。無ければ空文字",
+  "account_type": "business" | "creator" | "personal" | "any",
+  "has_contact": true | false（bio にメール等の連絡先がある人だけに絞るなら true）,
+  "verified_only": true | false,
+  "has_pr": "any" | "yes" | "no"（PR/タイアップ投稿の有無）,
+  "min_reel_views": 数値 or null,
+  "min_posts": 数値 or null,
+  "region": "地域を表す語。無ければ空文字",
   "posts_limit": 数値（既定200）,
   "notes": "解釈できなかった条件や注意点を1文で"
 }"""
@@ -101,6 +113,17 @@ def brief_to_filters(brief_text, api_key, lang="ja"):
         "narration_only": bool(data.get("narration_only")),
         "min_engagement": float(data.get("min_engagement") or 0),
         "content_keywords": [str(k) for k in (data.get("content_keywords") or [])],
+        "profile_keyword": str(data.get("profile_keyword") or "").strip(),
+        "caption_keyword": str(data.get("caption_keyword") or "").strip(),
+        "mention": str(data.get("mention") or "").lstrip("@").strip(),
+        "account_type": data.get("account_type") if data.get("account_type") in
+                        ("business", "creator", "personal", "any") else "any",
+        "has_contact": bool(data.get("has_contact")),
+        "verified_only": bool(data.get("verified_only")),
+        "has_pr": data.get("has_pr") if data.get("has_pr") in ("yes", "no", "any") else "any",
+        "min_reel_views": _as_int(data.get("min_reel_views")),
+        "min_posts": _as_int(data.get("min_posts")),
+        "region": str(data.get("region") or "").strip(),
         "posts_limit": _as_int(data.get("posts_limit"), 200),
         "notes": data.get("notes") or "",
     }
@@ -289,6 +312,135 @@ def classify_content(posts, profile):
     }
 
 
+# ---------------------------------------------------------------------------
+# プロフィール属性の抽出（すべて API の実データから）
+# ---------------------------------------------------------------------------
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+PR_TAGS = ["#pr", "#ad", "#sponsored", "#タイアップ", "#提供", "#広告",
+           "#プロモーション", "paid partnership", "タイアップ投稿"]
+
+
+def account_type(profile):
+    """business / creator / personal を判定する。Apify のフラグをそのまま使う。"""
+    if profile.get("isBusinessAccount"):
+        return "business"
+    # creator アカウントは業種カテゴリを持つが business フラグは立たない
+    if profile.get("businessCategoryName") or profile.get("isProfessionalAccount"):
+        return "creator"
+    return "personal"
+
+
+def contact_info(profile):
+    """bio や公開連絡先からメールを拾う。営業先リストを作るとき効く。"""
+    email = (profile.get("publicEmail") or "").strip()
+    if not email:
+        m = EMAIL_RE.search(profile.get("biography") or "")
+        email = m.group(0) if m else ""
+    phone = (profile.get("publicPhoneNumber") or "").strip()
+    return {"email": email, "phone": phone, "has": bool(email or phone)}
+
+
+def detect_pr(posts):
+    """PR・タイアップ投稿の有無と本数。公式フラグとハッシュタグの両方を見る。"""
+    n = 0
+    for p in posts:
+        if p.get("isSponsored") or p.get("isPaidPartnership") or p.get("sponsorUsers"):
+            n += 1
+            continue
+        blob = ((p.get("caption") or "") + " " + " ".join(p.get("hashtags") or [])).lower()
+        if any(tag in blob for tag in PR_TAGS):
+            n += 1
+    return n
+
+
+def collect_mentions(posts):
+    """キャプション内の @メンションを集める。競合や代理店の担当先を辿るのに使う。"""
+    out = set()
+    for p in posts:
+        for m in (p.get("mentions") or []):
+            out.add(str(m).lstrip("@").lower())
+        for m in re.findall(r"@([A-Za-z0-9._]{2,30})", p.get("caption") or ""):
+            out.add(m.lower())
+    return out
+
+
+def reel_views(posts):
+    """Reel の平均再生回数。再生数を持つ投稿だけで平均する。"""
+    vals = [p.get("videoPlayCount") or p.get("videoViewCount") or 0
+            for p in posts if p.get("productType") == "clips"]
+    vals = [v for v in vals if v]
+    return round(sum(vals) / len(vals)) if vals else 0
+
+
+REGION_HINTS = ["東京", "大阪", "名古屋", "福岡", "札幌", "京都", "神戸", "横浜", "仙台",
+                "沖縄", "北海道", "関西", "関東", "九州", "tokyo", "osaka", "japan",
+                "台北", "台湾", "香港", "上海", "北京", "seoul", "korea"]
+
+
+def detect_region(profile):
+    """bio・住所欄から地域語を拾う。書いていなければ空。"""
+    text = " ".join([
+        profile.get("biography") or "",
+        profile.get("businessAddressJson") or "",
+        profile.get("city") or "",
+    ]).lower()
+    for h in REGION_HINTS:
+        if h.lower() in text:
+            return h
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# 品質シグナル（フォロワー買い・不自然さの兆候）
+# フォロワー個人のデータは取得できないため「断定」はできない。
+# 公開データから読める危険信号を列挙し、判断材料として提示する。
+# ---------------------------------------------------------------------------
+# フォロワー帯ごとの ER 目安（%）。業界で一般に言われるレンジの下限。
+ER_FLOOR = [(10_000, 1.2), (50_000, 0.8), (200_000, 0.5), (10**9, 0.3)]
+
+
+def quality_signals(row, history=None):
+    """row: 検索結果の1行。history: [{date, followers}] （あれば急増検知に使う）
+    返り値: {"flags": [シグナルID...], "score": "ok"|"warn"|"risk"}"""
+    flags = []
+    followers = row.get("followers") or 0
+    following = row.get("following") or 0
+    er = row.get("engagement") or 0
+    posts = row.get("posts_count") or 0
+
+    floor = next(v for lim, v in ER_FLOOR if followers <= lim)
+    if followers >= 5000 and 0 < er < floor:
+        flags.append("low_er")           # フォロワー数に対して ER が異常に低い
+    if following > 4000:
+        flags.append("mass_following")   # 大量フォロー（フォロバ稼ぎの典型）
+    if following > 0 and followers / following < 2 and followers > 10000:
+        flags.append("weak_ratio")       # フォロワー/フォロー比が低い
+    if posts and followers > 20000 and posts < 30:
+        flags.append("few_posts")        # 投稿が少なすぎるのにフォロワーが多い
+
+    if history and len(history) >= 2:
+        for a, b in zip(history, history[1:]):
+            try:
+                d0 = datetime.fromisoformat(a["date"][:10])
+                d1 = datetime.fromisoformat(b["date"][:10])
+                days = max((d1 - d0).days, 1)
+                if a["followers"] > 1000:
+                    rate = (b["followers"] - a["followers"]) / a["followers"] / days
+                    if rate > 0.05:      # 1日 +5% 超の急増
+                        flags.append("growth_spike")
+                        break
+            except Exception:
+                continue
+
+    if len(flags) >= 3:
+        score = "risk"
+    elif flags:
+        score = "warn"
+    else:
+        score = "ok"
+    return {"flags": flags, "score": score}
+
+
 def llm_enrich(profile, posts, api_key):
     payload = {
         "username": profile.get("username"),
@@ -358,60 +510,77 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
         if progress:
             progress(stage)
 
-    token = apify_token or os.getenv("APIFY_API_TOKEN")
+    # トークンは呼び出し元（＝各利用者のブラウザ）から渡される。
+    # サーバーの環境変数にはフォールバックしない：運営者のトークンを他人の検索に使わせない。
+    token = apify_token
     if not token:
         raise RuntimeError("APIFY_API_TOKEN missing")
     client = ApifyClient(token)
 
-    key = (anthropic_key or os.getenv("ANTHROPIC_API_KEY")) if use_llm else None
+    key = anthropic_key if use_llm else None
 
     hashtag = (params.get("hashtag") or "").strip()
-    if not hashtag:
-        raise ValueError("hashtag missing")
-
-    report("fetching_posts")
-    posts = fetch_hashtag_posts(client, hashtag, params.get("posts_limit", 200))
-    if not posts:
-        return {"results": [], "stats": {"posts": 0, "accounts": 0, "matched": 0}}
+    direct = [u.lstrip("@").strip() for u in (params.get("usernames") or []) if str(u).strip()]
 
     posts_by_user = {}
-    for p in posts:
-        u = p.get("ownerUsername")
-        if u:
-            posts_by_user.setdefault(u, []).append(p)
+    posts = []
 
-    usernames = list(posts_by_user.keys())
-    report(f"accounts_found:{len(usernames)}")
+    if direct:
+        # 特定アカウントの直接チェック（ハッシュタグ検索を経由しない）
+        report("fetching_profiles")
+        usernames = direct[:15]
+    else:
+        if not hashtag:
+            raise ValueError("hashtag missing")
+        report("fetching_posts")
+        posts = fetch_hashtag_posts(client, hashtag, params.get("posts_limit", 200))
+        if not posts:
+            return {"results": [], "stats": {"posts": 0, "accounts": 0, "matched": 0}}
+        for p in posts:
+            u = p.get("ownerUsername")
+            if u:
+                posts_by_user.setdefault(u, []).append(p)
+        usernames = list(posts_by_user.keys())
+        report(f"accounts_found:{len(usernames)}")
 
     profiles = fetch_profiles(client, usernames, progress=progress)
 
     report("filtering")
     cutoff = datetime.now(timezone.utc) - timedelta(days=params.get("active_days", 90))
     results = []
+    candidates = []   # LLM 補正待ち。key がある場合はここに積んで後で並列処理する
 
     for username, profile in profiles.items():
         if profile.get("private"):
             continue
 
         followers = profile.get("followersCount") or 0
-        if not (params["min_followers"] <= followers <= params["max_followers"]):
+        # 直接指定モードでは絞り込まない：ユーザー名を手で入れた＝この人を
+        # 見たいという意図。フォームに残っている範囲設定で黙って消さない。
+        if not direct and not (params.get("min_followers", 0) <= followers <= params.get("max_followers", 10**9)):
             continue
 
         user_posts = dedupe_posts(posts_by_user.get(username, []) + (profile.get("latestPosts") or []))
 
         stamps = [t for t in (parse_ts(p.get("timestamp")) for p in user_posts) if t]
-        if not stamps:
-            continue
-        last_post = max(stamps)
-        if last_post < cutoff:
-            continue
+        if stamps:
+            last_post = max(stamps)
+            # 活動期間の絞り込みはハッシュタグ検索のときだけ。ユーザー名を直接
+            # 指定した場合は「この人を見たい」という意図なので落とさない。
+            if not direct and last_post < cutoff:
+                continue
+            last_post_str = last_post.strftime("%Y-%m-%d")
+        else:
+            if not direct:
+                continue
+            last_post_str = ""
 
         # エンゲージメント率は可能なら本人の最新投稿だけで計算する。
         # ハッシュタグ検索で拾えた投稿は「伸びた投稿」に偏るため上振れする。
         er_source = profile.get("latestPosts") or user_posts
         likes = [p.get("likesCount", 0) for p in er_source if p.get("likesCount")]
         engagement = round(sum(likes) / len(likes) / followers * 100, 2) if likes and followers else 0.0
-        if engagement < params.get("min_engagement", 0):
+        if not direct and engagement < params.get("min_engagement", 0):
             continue
 
         narration = estimate_narration(user_posts)
@@ -419,8 +588,115 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
         age = estimate_age(profile)
         content = classify_content(user_posts, profile)
 
+        # --- 実データから取れる属性 ---
+        atype = account_type(profile)
+        contact = contact_info(profile)
+        pr_count = detect_pr(user_posts)
+        avg_reel = reel_views(user_posts)
+        region = detect_region(profile)
+        posts_count = profile.get("postsCount") or 0
+        bio_raw = (profile.get("biography") or "")
+
+        # --- 絞り込み（直接指定モードでは一切適用しない：指名した人は必ず表示） ---
+        if not direct:
+            if params.get("account_type", "any") != "any" and atype != params["account_type"]:
+                continue
+            if params.get("has_contact") and not contact["has"]:
+                continue
+            if params.get("verified_only") and not profile.get("verified"):
+                continue
+            if params.get("has_pr") == "yes" and pr_count == 0:
+                continue
+            if params.get("has_pr") == "no" and pr_count > 0:
+                continue
+            if params.get("min_reel_views") and avg_reel < params["min_reel_views"]:
+                continue
+            if params.get("min_posts") and posts_count < params["min_posts"]:
+                continue
+
+            pk = (params.get("profile_keyword") or "").lower()
+            if pk and pk not in bio_raw.lower() and pk not in (profile.get("fullName") or "").lower():
+                continue
+
+            ck = (params.get("caption_keyword") or "").lower()
+            if ck and not any(ck in (p.get("caption") or "").lower() for p in user_posts):
+                continue
+
+            mention = (params.get("mention") or "").lstrip("@").lower()
+            if mention and mention not in collect_mentions(user_posts):
+                continue
+
+            rg = (params.get("region") or "").lower()
+            if rg and rg not in (bio_raw + " " + region).lower():
+                continue
+
+            exclude = params.get("exclude_usernames") or []
+            if exclude and username in exclude:
+                continue
+
+            # 投稿内容キーワードは LLM に依存しない（haystack はルール抽出）ので先に判定
+            kws = [k.lower() for k in (params.get("content_keywords") or [])]
+            if kws and not any(k in content["haystack"] for k in kws):
+                continue
+
         if key:
-            llm = llm_enrich(profile, user_posts, key)
+            candidates.append({
+                "username": username, "profile": profile, "user_posts": user_posts,
+                "followers": followers, "engagement": engagement,
+                "last_post_str": last_post_str, "narration": narration,
+                "gender": gender, "age": age, "content": content,
+                "atype": atype, "contact": contact, "pr_count": pr_count,
+                "avg_reel": avg_reel, "region": region,
+                "posts_count": posts_count, "bio_raw": bio_raw,
+            })
+            continue
+
+        if not direct:
+            if params.get("gender", "any") != "any" and gender["value"] != params["gender"]:
+                continue
+
+            if params.get("age_min") or params.get("age_max"):
+                nums = re.findall(r"\d+", age["value"])
+                if not nums:
+                    continue
+                a = int(nums[0])
+                if params.get("age_min") and a < params["age_min"]:
+                    continue
+                if params.get("age_max") and a > params["age_max"]:
+                    continue
+
+            if params.get("narration_only") and narration["value"] not in ("yes", "partial"):
+                continue
+
+        results.append(_build_row(hashtag, {
+            "username": username, "profile": profile,
+            "followers": followers, "engagement": engagement,
+            "last_post_str": last_post_str, "narration": narration,
+            "gender": gender, "age": age, "content": content,
+            "atype": atype, "contact": contact, "pr_count": pr_count,
+            "avg_reel": avg_reel, "region": region,
+            "posts_count": posts_count,
+        }))
+
+    # --- LLM 補正フェーズ（並列） ---
+    # 逐次だと 1 アカウント最大 60 秒 × 件数で実用に耐えないため、8 並列で回す。
+    if key and candidates:
+        report(f"llm:0/{len(candidates)}")
+        done = [0]
+        lock = threading.Lock()
+
+        def enrich(c):
+            llm = llm_enrich(c["profile"], c["user_posts"], key)
+            with lock:
+                done[0] += 1
+                report(f"llm:{done[0]}/{len(candidates)}")
+            return c, llm
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            enriched = list(pool.map(enrich, candidates))
+
+        for c, llm in enriched:
+            gender, age, content = c["gender"], c["age"], c["content"]
             if llm:
                 if llm.get("gender") in ("female", "male"):
                     gender = {"value": llm["gender"], "confidence": llm.get("gender_confidence", "medium")}
@@ -429,51 +705,59 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
                 if llm.get("content"):
                     content = {**content, "value": llm["content"],
                                "confidence": llm.get("content_confidence", "medium")}
+            c.update(gender=gender, age=age, content=content)
 
-        if params.get("gender", "any") != "any" and gender["value"] != params["gender"]:
-            continue
+            if not direct:
+                if params.get("gender", "any") != "any" and gender["value"] != params["gender"]:
+                    continue
+                if params.get("age_min") or params.get("age_max"):
+                    nums = re.findall(r"\d+", age["value"])
+                    if not nums:
+                        continue
+                    a = int(nums[0])
+                    if params.get("age_min") and a < params["age_min"]:
+                        continue
+                    if params.get("age_max") and a > params["age_max"]:
+                        continue
+                if params.get("narration_only") and c["narration"]["value"] not in ("yes", "partial"):
+                    continue
 
-        if params.get("age_min") or params.get("age_max"):
-            nums = re.findall(r"\d+", age["value"])
-            if not nums:
-                continue
-            a = int(nums[0])
-            if params.get("age_min") and a < params["age_min"]:
-                continue
-            if params.get("age_max") and a > params["age_max"]:
-                continue
-
-        if params.get("narration_only") and narration["value"] not in ("yes", "partial"):
-            continue
-
-        kws = [k.lower() for k in (params.get("content_keywords") or [])]
-        if kws and not any(k in content["haystack"] for k in kws):
-            continue
-
-        results.append({
-            "username": username,
-            "url": f"https://www.instagram.com/{username}/",
-            "full_name": profile.get("fullName") or "",
-            "followers": followers,
-            "engagement": engagement,
-            "last_post": last_post.strftime("%Y-%m-%d"),
-            "posts_count": profile.get("postsCount") or 0,
-            "narration": narration["value"],
-            "narration_conf": narration["confidence"],
-            "reel_ratio": narration["reel_ratio"],
-            "gender": gender["value"],
-            "gender_conf": gender["confidence"],
-            "age": age["value"],
-            "age_conf": age["confidence"],
-            "content": content["value"],
-            "content_conf": content["confidence"],
-            "bio": (profile.get("biography") or "").replace("\n", " ")[:160],
-            "verified": bool(profile.get("verified")),
-            "hashtag": hashtag,
-        })
+            results.append(_build_row(hashtag, c))
 
     results.sort(key=lambda r: r["followers"], reverse=True)
     return {
         "results": results,
         "stats": {"posts": len(posts), "accounts": len(usernames), "matched": len(results)},
+    }
+
+
+def _build_row(hashtag, c):
+    profile = c["profile"]
+    return {
+        "username": c["username"],
+        "url": f"https://www.instagram.com/{c['username']}/",
+        "full_name": profile.get("fullName") or "",
+        "followers": c["followers"],
+        "following": profile.get("followsCount") or 0,
+        "engagement": c["engagement"],
+        "last_post": c["last_post_str"],
+        "posts_count": c["posts_count"],
+        "account_type": c["atype"],
+        "email": c["contact"]["email"],
+        "has_contact": c["contact"]["has"],
+        "pr_count": c["pr_count"],
+        "avg_reel_views": c["avg_reel"],
+        "region": c["region"],
+        "narration": c["narration"]["value"],
+        "narration_conf": c["narration"]["confidence"],
+        "reel_ratio": c["narration"]["reel_ratio"],
+        "gender": c["gender"]["value"],
+        "gender_conf": c["gender"]["confidence"],
+        "age": c["age"]["value"],
+        "age_conf": c["age"]["confidence"],
+        "content": c["content"]["value"],
+        "content_conf": c["content"]["confidence"],
+        "bio": (profile.get("biography") or "").replace("\n", " ")[:160],
+        "verified": bool(profile.get("verified")),
+        "hashtag": hashtag or "(direct)",
     }

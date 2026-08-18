@@ -39,10 +39,11 @@ import radar_core
 app = Flask(__name__)
 
 CSV_COLUMNS = [
-    "username", "url", "full_name", "followers", "engagement", "last_post",
-    "posts_count", "narration", "narration_conf", "reel_ratio",
+    "username", "url", "full_name", "followers", "growth", "engagement", "last_post",
+    "posts_count", "avg_reel_views", "account_type", "verified", "email", "pr_count",
+    "region", "narration", "narration_conf", "reel_ratio",
     "gender", "gender_conf", "age", "age_conf", "content", "content_conf",
-    "bio", "verified", "hashtag",
+    "bio", "hashtag",
 ]
 LIST_CSV_EXTRA = ["item_status", "note", "added_by", "added_at"]
 
@@ -73,7 +74,7 @@ def safe_filename(name):
 
 @app.route("/")
 def index():
-    return render_template("index.html", has_ai=bool(os.getenv("ANTHROPIC_API_KEY")))
+    return render_template("index.html")
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +87,8 @@ def api_parse():
     if not brief:
         return jsonify({"error": "empty_brief"}), 400
 
-    key = os.getenv("ANTHROPIC_API_KEY")
+    # 各利用者が自分の Anthropic キーをヘッダで送る。サーバーは保持しない。
+    key = (request.headers.get("X-Anthropic-Key") or "").strip()
     if not key:
         return jsonify({"error": "no_api_key"}), 400
 
@@ -104,24 +106,48 @@ def api_parse():
 def api_search():
     payload = request.get_json(silent=True) or {}
     use_llm = bool(payload.pop("use_llm", True))
+    creator = who(payload)
     payload.pop("user", None)
 
-    if not (payload.get("hashtag") or "").strip():
+    if not (payload.get("hashtag") or "").strip() and not payload.get("usernames"):
         return jsonify({"error": "no_hashtag"}), 400
-    if not os.getenv("APIFY_API_TOKEN"):
+
+    # 利用者ごとの自己申告トークン。サーバーには保存せず、この検索の間だけ使う。
+    apify_token = (request.headers.get("X-Apify-Token") or "").strip()
+    anthropic_key = (request.headers.get("X-Anthropic-Key") or "").strip()
+    if not apify_token:
         return jsonify({"error": "no_apify_token"}), 400
 
     job_id = uuid.uuid4().hex[:12]
-    db.create_job(job_id, payload, created_by=who(request.get_json(silent=True)))
+    db.create_job(job_id, payload, created_by=creator)
 
     def worker():
         try:
             db.update_job(job_id, status="running", stage="fetching_posts")
+
+            # 「キャンペーンリスト除外」: すでにリストに入っている人を候補から外す
+            if payload.pop("exclude_saved", False):
+                payload["exclude_usernames"] = db.saved_usernames()
+
             out = radar_core.run_search(
-                payload, use_llm=use_llm,
+                payload,
+                apify_token=apify_token,
+                anthropic_key=anthropic_key or None,
+                use_llm=use_llm and bool(anthropic_key),
                 progress=lambda stage: db.update_job(job_id, stage=stage),
             )
-            db.save_results(job_id, out["results"])
+
+            rows = out["results"]
+            db.record_followers(rows)
+            db.record_accounts(rows)
+            growth = db.growth_map([r["username"] for r in rows])
+            for r in rows:
+                g = growth.get(r["username"])
+                r["growth"] = g["pct"] if g else None
+                r["growth_days"] = g["days"] if g else 0
+                r["quality"] = radar_core.quality_signals(r)["score"]
+
+            db.save_results(job_id, rows)
             db.update_job(job_id, status="done", stage="done", stats=out["stats"])
         except Exception as e:
             traceback.print_exc()
@@ -161,6 +187,102 @@ def api_export_job(job_id):
 
 
 # ---------------------------------------------------------------------------
+# 蓄積データベース（閲覧は Apify を消費しない）
+# ---------------------------------------------------------------------------
+@app.route("/api/accounts")
+def api_accounts():
+    q = request.args.get("q", "").strip()
+    min_f = int(request.args.get("min_f") or 0)
+    max_f = int(request.args.get("max_f") or 10**9)
+    sort = request.args.get("sort", "followers")
+    rows = db.browse_accounts(q, min_f, max_f, sort)
+    for r in rows:
+        r["quality"] = radar_core.quality_signals(r)["score"]
+    return jsonify({"accounts": rows, "total": db.account_count()})
+
+
+@app.route("/api/accounts/<username>")
+def api_account_detail(username):
+    item = db.get_account(username)
+    if not item:
+        return jsonify({"error": "not_found"}), 404
+    sig = radar_core.quality_signals(item, history=item.get("history"))
+    item["quality"] = sig["score"]
+    item["quality_flags"] = sig["flags"]
+    item["similar"] = db.similar_accounts(username)
+    return jsonify({"account": item})
+
+
+# ---------------------------------------------------------------------------
+# フォルダ
+# ---------------------------------------------------------------------------
+@app.route("/api/tree")
+def api_tree():
+    """フォルダ + リストの構造をまとめて返す（左ナビ用）。"""
+    return jsonify(db.tree())
+
+
+@app.route("/api/folders", methods=["POST"])
+def api_create_folder():
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "no_name"}), 400
+    try:
+        fid = db.create_folder(name, created_by=who(payload))
+    except Exception:
+        return jsonify({"error": "duplicate_name"}), 409
+    return jsonify({"id": fid, "name": name})
+
+
+@app.route("/api/folders/<int:folder_id>", methods=["PATCH", "DELETE"])
+def api_folder(folder_id):
+    if not db.get_folder(folder_id):
+        return jsonify({"error": "not_found"}), 404
+
+    if request.method == "DELETE":
+        # フォルダのみ削除。中のリストは未分類に戻るだけで消えない。
+        db.delete_folder(folder_id)
+        return jsonify({"ok": True})
+
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "no_name"}), 400
+    try:
+        db.rename_folder(folder_id, name)
+    except Exception:
+        return jsonify({"error": "duplicate_name"}), 409
+    return jsonify({"ok": True})
+
+
+@app.route("/api/lists/<int:list_id>/move", methods=["POST"])
+def api_move_list(list_id):
+    if not db.get_list(list_id):
+        return jsonify({"error": "not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    fid = payload.get("folder_id")
+    db.move_list(list_id, int(fid) if fid else None)
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# 横断検索
+# ---------------------------------------------------------------------------
+@app.route("/api/saved")
+def api_saved():
+    """全リスト横断で保存済みの人を探す。?q= で絞り込み。"""
+    return jsonify({"items": db.find_saved(request.args.get("q", "").strip())})
+
+
+@app.route("/api/saved/map", methods=["POST"])
+def api_saved_map():
+    """検索結果に『保存済み』バッジを出すための {username: [リスト名]} を返す。"""
+    payload = request.get_json(silent=True) or {}
+    return jsonify({"map": db.saved_map(payload.get("usernames") or [])})
+
+
+# ---------------------------------------------------------------------------
 # リスト
 # ---------------------------------------------------------------------------
 @app.route("/api/lists", methods=["GET", "POST"])
@@ -172,8 +294,11 @@ def api_lists():
     name = (payload.get("name") or "").strip()
     if not name:
         return jsonify({"error": "no_name"}), 400
+    fid = payload.get("folder_id")
     try:
-        list_id = db.create_list(name, payload.get("description", ""), created_by=who(payload))
+        list_id = db.create_list(name, payload.get("description", ""),
+                                 created_by=who(payload),
+                                 folder_id=int(fid) if fid else None)
     except Exception:
         return jsonify({"error": "duplicate_name"}), 409
     return jsonify({"id": list_id, "name": name})
