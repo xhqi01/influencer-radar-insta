@@ -480,9 +480,20 @@ def parse_ts(value):
             return None
 
 
+def _dataset_id(run):
+    """apify-client のバージョンによって call() の返り値が変わる：
+    新しめ（3.x系）は Run オブジェクトで run.default_dataset_id、
+    古い版は dict で run["defaultDatasetId"]。両対応にしておく。"""
+    if hasattr(run, "default_dataset_id"):
+        return run.default_dataset_id
+    if isinstance(run, dict):
+        return run.get("defaultDatasetId") or run.get("default_dataset_id")
+    raise RuntimeError(f"Actor run から dataset ID を取得できません: {type(run)}")
+
+
 def fetch_hashtag_posts(client, hashtag, limit):
     run = client.actor(HASHTAG_ACTOR).call(run_input={"hashtags": [hashtag], "resultsLimit": limit})
-    return list(client.dataset(run["defaultDatasetId"]).iterate_items())
+    return list(client.dataset(_dataset_id(run)).iterate_items())
 
 
 def fetch_profiles(client, usernames, progress=None):
@@ -492,7 +503,7 @@ def fetch_profiles(client, usernames, progress=None):
         batch = usernames[i:i + PROFILE_BATCH_SIZE]
         try:
             run = client.actor(PROFILE_ACTOR).call(run_input={"usernames": batch})
-            for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+            for item in client.dataset(_dataset_id(run)).iterate_items():
                 if item.get("username"):
                     profiles[item["username"]] = item
         except Exception as e:
