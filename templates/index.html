@@ -129,11 +129,34 @@ textarea.mini{
   width:100%;height:52px;resize:vertical;padding:6px 8px;
   font-family:var(--mono);font-size:11.5px;background:var(--card);border:1px solid var(--rule);
 }
+#hashtag.mini{height:40px}
 .na{list-style:none;margin:0;padding:0}
 .na li{
   font-size:10.5px;color:var(--muted);padding:4px 0 4px 13px;position:relative;line-height:1.45;
 }
 .na li::before{content:"×";position:absolute;left:0;color:var(--muted);opacity:.7}
+
+.seg{display:flex;border:1px solid var(--rule)}
+.seg-btn{
+  flex:1;padding:6px 8px;border:0;background:var(--card);cursor:pointer;
+  font-family:var(--sans);font-size:11px;color:var(--dim);
+}
+.seg-btn+.seg-btn{border-left:1px solid var(--rule)}
+.seg-btn.active{background:var(--accent);color:#fff}
+.seg-btn:hover:not(.active){background:var(--paper)}
+
+/* ===== アバター ===== */
+.avatar-th{width:34px}
+.av{
+  width:26px;height:26px;border-radius:50%;object-fit:cover;display:block;
+  background:var(--card);border:1px solid var(--rule);
+}
+.av-fallback{
+  width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:10px;color:var(--dim);
+  background:var(--card);border:1px solid var(--rule);text-transform:uppercase;
+}
+.av-lg{width:42px;height:42px;border-radius:50%;object-fit:cover;border:1px solid var(--rule);flex:none}
 
 .btn{
   font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;
@@ -392,8 +415,17 @@ dialog.drawer::backdrop{background:rgba(22,23,26,.22)}
 
       <p class="plabel mt"><span class="tag hard" data-i18n="hardBadge"></span></p>
       <p class="pnote" data-i18n="hardNote"></p>
-      <div class="f"><label data-i18n="fHashtag"></label><input id="hashtag">
+      <div class="f"><label data-i18n="fHashtag"></label>
+        <textarea id="hashtag" class="mini"></textarea>
         <span class="help" data-i18n="hHashtag"></span></div>
+      <div class="f" id="hashtagModeWrap" hidden>
+        <label data-i18n="fHashtagMode"></label>
+        <div class="seg" role="group">
+          <button type="button" class="seg-btn active" data-mode="union" data-i18n="hmUnion"></button>
+          <button type="button" class="seg-btn" data-mode="intersect" data-i18n="hmIntersect"></button>
+        </div>
+        <span class="help" id="hashtagModeHelp"></span>
+      </div>
 
       <div class="f"><label data-i18n="fFollowers"></label>
         <div class="duo"><input id="minF" type="number" value="10000"><em>–</em><input id="maxF" type="number" value="70000"></div>
@@ -616,10 +648,13 @@ dialog.drawer::backdrop{background:rgba(22,23,26,.22)}
 <!-- アカウント詳細ドロワー -->
 <dialog id="acct" class="drawer">
   <div class="drawer-head">
-    <div>
-      <a id="aName" href="#" target="_blank" rel="noopener"></a>
-      <span id="aFull" class="afull"></span>
-      <span id="aQual" class="qbadge"></span>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span id="aAvWrap"></span>
+      <div>
+        <a id="aName" href="#" target="_blank" rel="noopener"></a>
+        <span id="aFull" class="afull"></span>
+        <span id="aQual" class="qbadge"></span>
+      </div>
     </div>
     <button class="x" id="aClose">×</button>
   </div>
@@ -744,7 +779,6 @@ ja:{
   acAny:"指定なし",
   ac3m:"3ヶ月以内",
   ac6m:"6ヶ月以内",
-  hHashtag:"#は不要。1つだけ。例：筋トレ",
   hFollowers:"左が最少、右が最多",
   hActive:"これより古いアカウントは除外",
   hEr:"平均いいね÷フォロワー。3以上が目安",
@@ -806,6 +840,11 @@ ja:{
   setupSaved:"保存しました（このブラウザのみ）",
   errNoToken:"Apify トークンが未設定です。右上の「API設定」から自分のトークンを入れてください",
   parseHintNoAI:"AI 変換には右上の「API設定」で Anthropic キーの設定が必要です",
+  fHashtagMode:"複数タグの扱い",
+  hmUnion:"どれか（和集合）",
+  hmIntersect:"すべて（積集合）",
+  hmHelp:n=>`${n}個のタグ。「どれか」=いずれかのタグに投稿があれば対象。「すべて」=全タグに投稿がある人だけ（候補は大きく減ります）`,
+  hHashtag:"改行かカンマ区切りで最大5個。#は不要。例：筋トレ",
   savedTo:n=>`「${n}」に保存しました`, selectFirst:"先に行を選択してください",
   confirmDel:n=>`リスト「${n}」を削除します。よろしいですか？`, dupName:"同じ名前のリストがあります"
 },
@@ -900,7 +939,6 @@ en:{
   acAny:"No limit",
   ac3m:"Within 3 months",
   ac6m:"Within 6 months",
-  hHashtag:"No #, one only. e.g. fitness",
   hFollowers:"Minimum on the left, maximum on the right",
   hActive:"Anything older than this is excluded",
   hEr:"Avg likes \u00f7 followers. 3+ is a decent bar",
@@ -962,6 +1000,11 @@ en:{
   setupSaved:"Saved (this browser only)",
   errNoToken:"No Apify token set. Open API setup (top right) and paste your own token",
   parseHintNoAI:"AI conversion needs your Anthropic key \u2014 set it in API setup (top right)",
+  fHashtagMode:"Multiple tags",
+  hmUnion:"Any (union)",
+  hmIntersect:"All (intersect)",
+  hmHelp:n=>`${n} tags. Any = posted under at least one. All = only accounts with posts under every tag (cuts the pool hard)`,
+  hHashtag:"Up to 5, separated by newlines or commas. No #. e.g. fitness",
   savedTo:n=>`Saved to "${n}"`, selectFirst:"Select some rows first",
   confirmDel:n=>`Delete the list "${n}"?`, dupName:"A list with that name already exists"
 },
@@ -1056,7 +1099,6 @@ zh:{
   acAny:"不限",
   ac3m:"3个月内",
   ac6m:"6个月内",
-  hHashtag:"不用写 #，只填一个。例：筋トレ",
   hFollowers:"左边最少，右边最多",
   hActive:"比这更久没更新的会被排除",
   hEr:"平均点赞÷粉丝数。3 以上算不错",
@@ -1118,6 +1160,11 @@ zh:{
   setupSaved:"已保存（仅此浏览器）",
   errNoToken:"还没设置 Apify 令牌。点右上角「API设置」填入你自己的令牌",
   parseHintNoAI:"AI 转换需要你自己的 Anthropic 密钥——在右上角「API设置」里填",
+  fHashtagMode:"多标签的处理",
+  hmUnion:"任一（并集）",
+  hmIntersect:"全部（交集）",
+  hmHelp:n=>`${n}个标签。任一=在其中任何一个标签下发过帖就算。全部=每个标签下都发过帖的人才算（候选会大幅减少）`,
+  hHashtag:"换行或逗号分隔，最多5个。不用写#。例：筋トレ",
   savedTo:n=>`已存进「${n}」`, selectFirst:"请先勾选要保存的行",
   confirmDel:n=>`确定删除名单「${n}」吗？`, dupName:"已经有同名的名单了"
 }};
@@ -1231,7 +1278,10 @@ $("parseBtn").onclick = async ()=>{
   const prev = $("parseHint").textContent; $("parseHint").textContent = "…";
   try{
     const {filters:f} = await api("/api/parse",{method:"POST",body:JSON.stringify({brief,lang:LANG})});
-    $("hashtag").value = f.hashtag || "";
+    $("hashtag").value = (f.hashtags && f.hashtags.length ? f.hashtags : (f.hashtag ? [f.hashtag] : [])).join("\n");
+    HASHTAG_MODE = f.hashtag_mode === "intersect" ? "intersect" : "union";
+    document.querySelectorAll(".seg-btn").forEach(x=> x.classList.toggle("active", x.dataset.mode === HASHTAG_MODE));
+    $("hashtag").dispatchEvent(new Event("input"));
     $("minF").value = f.min_followers; $("maxF").value = f.max_followers;
     // AI は「30日以内」など任意の日数を返しうるが、選択肢は3ヶ月/6ヶ月しかない。
     // 一番近い選択肢に寄せる（そのまま代入すると選択が空になる）。
@@ -1260,14 +1310,30 @@ $("parseBtn").onclick = async ()=>{
 };
 
 /* ---------- search ---------- */
+let HASHTAG_MODE = "union";
+document.querySelectorAll(".seg-btn").forEach(b=>{
+  b.onclick = ()=>{
+    HASHTAG_MODE = b.dataset.mode;
+    document.querySelectorAll(".seg-btn").forEach(x=> x.classList.toggle("active", x===b));
+  };
+});
+function parseHashtags(){
+  return $("hashtag").value.split(/[\n,、]/).map(s=>s.trim().replace(/^#/,"")).filter(Boolean).slice(0,5);
+}
+$("hashtag").addEventListener("input", ()=>{
+  const n = parseHashtags().length;
+  $("hashtagModeWrap").hidden = n < 2;
+  if (n >= 2) $("hashtagModeHelp").textContent = t().hmHelp(n);
+});
+
 $("runBtn").onclick = async ()=>{
-  const hashtag = $("hashtag").value.trim().replace(/^#/,"");
+  const hashtags = parseHashtags();
   const usernames = $("usernames").value.split(/[\n,]/).map(s=>s.trim().replace(/^@/,"")).filter(Boolean);
   $("runMsg").textContent = "";
   if (!tokens.apify()){ $("runMsg").textContent = t().errNoToken; $("setupBtn").focus(); return; }
-  if (!hashtag && !usernames.length){ $("runMsg").textContent = t().errNoHashtag; return; }
+  if (!hashtags.length && !usernames.length){ $("runMsg").textContent = t().errNoHashtag; return; }
   const p = {
-    hashtag, usernames,
+    hashtags, hashtag_mode: HASHTAG_MODE, usernames,
     min_followers:+$("minF").value || 0,
     max_followers:+$("maxF").value || 100000000,
     active_days:$("activeDays").value ? +$("activeDays").value : 36500,
@@ -1344,6 +1410,16 @@ function sortRows(rows, s){
   });
 }
 
+/* Instagram の画像 URL は署名付きで期限切れになることがあるため、
+   読み込み失敗時は頭文字のプレースホルダに差し替える。
+   referrerpolicy はホットリンク対策で必須。 */
+function avatarHTML(username, src){
+  const l = esc((username || "?").slice(0, 1));
+  if (!src) return `<span class="av-fallback">${l}</span>`;
+  return `<img class="av" src="${esc(src)}" data-l="${l}" loading="lazy" referrerpolicy="no-referrer"
+    onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'av-fallback',textContent:this.dataset.l}))">`;
+}
+
 function visible(){
   const q = $("rq").value.trim().toLowerCase();
   const mf = +$("rMinF").value||0, mer = +$("rMinEr").value||0;
@@ -1358,11 +1434,12 @@ function visible(){
   }), SORT);
 }
 
-function headHTML(cols, sort, attr, d){
+function headHTML(cols, sort, attr, d, withAvatar){
   const label = c => ({growth:d.colGrowth, account_type:d.colType,
                        avg_reel_views:d.colReel, pr_count:d.colPr,
                        email:d.colEmail, list_name:d.inList}[c]) || d.cols[c] || c;
   return `<th class="fixed"><input type="checkbox" class="tick row" id="all"></th>` +
+    (withAvatar ? `<th class="fixed avatar-th"></th>` : "") +
     cols.map(c=>`<th ${attr}="${c}">${esc(label(c))}${sort.k===c?`<span class="ar">${sort.d<0?"↓":"↑"}</span>`:""}</th>`).join("") +
     `<th class="fixed"></th>`;
 }
@@ -1384,7 +1461,7 @@ function renderResults(){
     return;
   }
   const rows = visible();
-  $("rhead").innerHTML = headHTML(COLS, SORT, "data-s", d);
+  $("rhead").innerHTML = headHTML(COLS, SORT, "data-s", d, true);
   $("rhead").querySelectorAll("th[data-s]").forEach(th=>{
     th.onclick = ()=>{
       const k = th.dataset.s;
@@ -1398,6 +1475,7 @@ function renderResults(){
   $("rbody").innerHTML = rows.length ? rows.map(r=>`
     <tr data-u="${esc(r.username)}">
       <td><input type="checkbox" class="tick row"></td>
+      <td class="fixed">${avatarHTML(r.username, r.avatar)}</td>
       <td class="acct"><a href="${esc(r.url)}" target="_blank" rel="noopener">@${esc(r.username)}</a>${r.verified?'<span class="vf">✓</span>':""}</td>
       <td class="num">${(+r.followers).toLocaleString()}</td>
       <td class="num ${r.growth > 0 ? "up" : r.growth < 0 ? "down" : ""}">${r.growth == null ? "—" : (r.growth > 0 ? "+" : "") + r.growth + "%"}</td>
@@ -1417,7 +1495,7 @@ function renderResults(){
             ? `<button class="plus done" data-add="${esc(r.username)}" title="${esc(SAVED[r.username].join(", "))}">✓</button>`
             : `<button class="plus" data-add="${esc(r.username)}">+</button>`}</td>
     </tr>`).join("")
-    : `<tr><td colspan="${COLS.length+2}" class="blank">${esc(d.blankNone)}</td></tr>`;
+    : `<tr><td colspan="${COLS.length+3}" class="blank">${esc(d.blankNone)}</td></tr>`;
 
   $("rbody").querySelectorAll("[data-add]").forEach(b=>{
     b.onclick = ()=> openSave([RESULTS.find(r=>r.username === b.dataset.add)]);
@@ -1715,7 +1793,7 @@ const DBCOLS = ["username","followers","engagement","quality","index_hashtags","
 function renderDb(total){
   const d = t();
   $("dbNote").textContent = d.dbFree;
-  $("dbhead").innerHTML = DBCOLS.map(c=>{
+  $("dbhead").innerHTML = `<th class="fixed avatar-th"></th>` + DBCOLS.map(c=>{
     const lbl = {quality:d.colQuality, index_hashtags:d.dbTags,
                  times_seen:d.dbTimes, last_seen:d.dbLast}[c] || d.cols[c] || c;
     return `<th class="fixed">${esc(lbl)}</th>`;
@@ -1723,6 +1801,7 @@ function renderDb(total){
 
   $("dbbody").innerHTML = DB_ROWS.length ? DB_ROWS.map(a=>`
     <tr>
+      <td class="fixed">${avatarHTML(a.username, a.avatar)}</td>
       <td class="acct"><a href="#" data-open="${esc(a.username)}">@${esc(a.username)}</a></td>
       <td class="num">${(+a.followers).toLocaleString()}</td>
       <td class="num">${esc(a.engagement)}</td>
@@ -1734,7 +1813,7 @@ function renderDb(total){
             ? `<button class="plus done" data-add="${esc(a.username)}">✓</button>`
             : `<button class="plus" data-add="${esc(a.username)}">+</button>`}</td>
     </tr>`).join("")
-    : `<tr><td colspan="${DBCOLS.length+1}" class="blank">${esc(d.dbEmpty)}</td></tr>`;
+    : `<tr><td colspan="${DBCOLS.length+2}" class="blank">${esc(d.dbEmpty)}</td></tr>`;
 
   $("dbbody").querySelectorAll("[data-open]").forEach(el=>{
     el.onclick = e=>{ e.preventDefault(); openAccount(el.dataset.open); };
@@ -1770,6 +1849,7 @@ async function openAccount(username){
   try{ a = (await api(`/api/accounts/${encodeURIComponent(username)}`)).account; }
   catch(e){ toast(e.message); return; }
   const d = t();
+  $("aAvWrap").innerHTML = avatarHTML(a.username, a.avatar).replace('class="av"', 'class="av av-lg"').replace('class="av-fallback"', 'class="av-fallback av-lg"');
   $("aName").textContent = "@" + a.username;
   $("aName").href = a.url;
   $("aFull").textContent = a.full_name || "";

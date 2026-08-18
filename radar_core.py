@@ -56,7 +56,8 @@ def parse_json_response(text):
 # 自由文 → 検索条件
 # ---------------------------------------------------------------------------
 BRIEF_SCHEMA = """{
-  "hashtag": "検索するハッシュタグ1つ。#は付けない",
+  "hashtags": ["検索するハッシュタグ（#は付けない）。複数可、最大5個"],
+  "hashtag_mode": "union"（どれか1つでも投稿があれば対象） | "intersect"（指定した全タグに投稿がある人だけ）,
   "min_followers": 数値,
   "max_followers": 数値,
   "active_days": 数値（既定90）,
@@ -95,15 +96,19 @@ def brief_to_filters(brief_text, api_key, lang="ja"):
         "JSON のみを返すこと。前置き・説明・コードブロックは禁止。\n\n"
         f"スキーマ:\n{BRIEF_SCHEMA}\n\n"
         "ルール:\n"
-        "- hashtag が明示されていない場合は、要望文から最も検索効率が高いものを1つ選ぶ\n"
+        "- hashtags が明示されていない場合は、要望文から最も検索効率が高いものを1〜2個選ぶ\n"
         "- 日本市場向けなら日本語ハッシュタグ（筋トレ、宅トレ 等）を優先する\n"
+        "- 「AとBの両方」「両方に投稿してる人」のような条件なら hashtag_mode は intersect、"
+        "「AかBのどちらか」「どちらでもいい」なら union\n"
         "- 年齢の指定が無ければ age_min / age_max は null（推測で埋めない）\n"
         f"- notes は {lang} で書く\n\n"
         f"ユーザーの要望:\n{brief_text}"
     )
     data = parse_json_response(call_claude(prompt, api_key, max_tokens=700))
+    tags = [str(h).lstrip("#").strip() for h in (data.get("hashtags") or []) if str(h).strip()]
     return {
-        "hashtag": str(data.get("hashtag") or "").lstrip("#").strip(),
+        "hashtags": tags[:5],
+        "hashtag_mode": data.get("hashtag_mode") if data.get("hashtag_mode") in ("union", "intersect") else "union",
         "min_followers": _as_int(data.get("min_followers"), 10000),
         "max_followers": _as_int(data.get("max_followers"), 70000),
         "active_days": _as_int(data.get("active_days"), 90),
@@ -491,9 +496,23 @@ def _dataset_id(run):
     raise RuntimeError(f"Actor run から dataset ID を取得できません: {type(run)}")
 
 
-def fetch_hashtag_posts(client, hashtag, limit):
-    run = client.actor(HASHTAG_ACTOR).call(run_input={"hashtags": [hashtag], "resultsLimit": limit})
-    return list(client.dataset(_dataset_id(run)).iterate_items())
+def fetch_hashtag_posts(client, hashtags, limit_per_tag):
+    """複数ハッシュタグを1回の Apify 呼び出しでまとめて取得する。
+    hashtags: リスト（1つでも可）。各投稿に、どのタグから拾えたかを
+    _source_hashtags として付けておく（積集合/和集合の判定に使う）。"""
+    tags = [h.lstrip("#").strip() for h in hashtags if str(h).strip()]
+    if not tags:
+        return []
+    run = client.actor(HASHTAG_ACTOR).call(
+        run_input={"hashtags": tags, "resultsLimit": limit_per_tag})
+    posts = list(client.dataset(_dataset_id(run)).iterate_items())
+
+    # Apify の返り値には投稿がどのハッシュタグ由来かの明示フィールドが無い
+    # ことが多いため、キャプション／hashtags 配列に含まれるタグ名を突き合わせる。
+    for p in posts:
+        blob = ((p.get("caption") or "") + " " + " ".join(p.get("hashtags") or [])).lower()
+        p["_source_hashtags"] = [t for t in tags if t.lower() in blob] or tags[:1]
+    return posts
 
 
 def fetch_profiles(client, usernames, progress=None):
@@ -530,7 +549,15 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
 
     key = anthropic_key if use_llm else None
 
-    hashtag = (params.get("hashtag") or "").strip()
+    # ハッシュタグは複数対応。旧パラメータ "hashtag"（単数）も後方互換で読む。
+    hashtags = params.get("hashtags")
+    if not hashtags:
+        single = (params.get("hashtag") or "").strip()
+        hashtags = [single] if single else []
+    hashtags = [h.lstrip("#").strip() for h in hashtags if str(h).strip()]
+    hashtag_mode = params.get("hashtag_mode", "union")  # "union"（和集合）| "intersect"（積集合）
+    hashtag = hashtags[0] if hashtags else ""  # 表示用（結果行の hashtag 列など）
+
     direct = [u.lstrip("@").strip() for u in (params.get("usernames") or []) if str(u).strip()]
 
     posts_by_user = {}
@@ -541,11 +568,11 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
         report("fetching_profiles")
         usernames = direct[:15]
     else:
-        if not hashtag:
+        if not hashtags:
             raise ValueError("hashtag missing")
         report("fetching_posts")
-        posts = fetch_hashtag_posts(client, hashtag, params.get("posts_limit", 200))
-        print(f"[diag] hashtag='{hashtag}' raw posts fetched: {len(posts)}", file=sys.stderr)
+        posts = fetch_hashtag_posts(client, hashtags, params.get("posts_limit", 200))
+        print(f"[diag] hashtags={hashtags} mode={hashtag_mode} raw posts fetched: {len(posts)}", file=sys.stderr)
         if posts:
             print(f"[diag] sample post keys: {sorted(posts[0].keys())}", file=sys.stderr)
         if not posts:
@@ -558,6 +585,19 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
                 posts_by_user.setdefault(u, []).append(p)
             elif len(posts_by_user) == 0 and posts.index(p) < 2:
                 print(f"[diag] post missing owner username, keys={sorted(p.keys())}", file=sys.stderr)
+
+        # 積集合モード：投稿している全ハッシュタグの和が、指定したタグを
+        # すべてカバーしているアカウントだけ残す（＝全部のタグに関連投稿がある人）。
+        if hashtag_mode == "intersect" and len(hashtags) > 1:
+            want = {h.lower() for h in hashtags}
+            before = len(posts_by_user)
+            posts_by_user = {
+                u: ps for u, ps in posts_by_user.items()
+                if want <= {t.lower() for p in ps for t in (p.get("_source_hashtags") or [])}
+            }
+            print(f"[diag] intersect mode: {before} -> {len(posts_by_user)} accounts "
+                  f"cover all of {hashtags}", file=sys.stderr)
+
         usernames = list(posts_by_user.keys())
         print(f"[diag] unique usernames extracted from posts: {len(usernames)}", file=sys.stderr)
         report(f"accounts_found:{len(usernames)}")
@@ -587,6 +627,9 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
             drop("followers_range"); continue
 
         user_posts = dedupe_posts(posts_by_user.get(username, []) + (profile.get("latestPosts") or []))
+
+        matched_tags = sorted({t for p in posts_by_user.get(username, [])
+                                for t in (p.get("_source_hashtags") or [])}) or ([hashtag] if hashtag else [])
 
         stamps = [t for t in (parse_ts(p.get("timestamp")) for p in user_posts) if t]
         if stamps:
@@ -674,6 +717,7 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
                 "atype": atype, "contact": contact, "pr_count": pr_count,
                 "avg_reel": avg_reel, "region": region,
                 "posts_count": posts_count, "bio_raw": bio_raw,
+                "matched_tags": matched_tags,
             })
             continue
 
@@ -701,7 +745,7 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
             "gender": gender, "age": age, "content": content,
             "atype": atype, "contact": contact, "pr_count": pr_count,
             "avg_reel": avg_reel, "region": region,
-            "posts_count": posts_count,
+            "posts_count": posts_count, "matched_tags": matched_tags,
         }))
 
     # --- LLM 補正フェーズ（並列） ---
@@ -765,6 +809,7 @@ def _build_row(hashtag, c):
         "username": c["username"],
         "url": f"https://www.instagram.com/{c['username']}/",
         "full_name": profile.get("fullName") or "",
+        "avatar": profile.get("profilePicUrlHD") or profile.get("profilePicUrl") or "",
         "followers": c["followers"],
         "following": profile.get("followsCount") or 0,
         "engagement": c["engagement"],
@@ -788,4 +833,5 @@ def _build_row(hashtag, c):
         "bio": (profile.get("biography") or "").replace("\n", " ")[:160],
         "verified": bool(profile.get("verified")),
         "hashtag": hashtag or "(direct)",
+        "matched_hashtags": c.get("matched_tags") or ([hashtag] if hashtag else []),
     }

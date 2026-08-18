@@ -43,7 +43,7 @@ CSV_COLUMNS = [
     "posts_count", "avg_reel_views", "account_type", "verified", "email", "pr_count",
     "region", "narration", "narration_conf", "reel_ratio",
     "gender", "gender_conf", "age", "age_conf", "content", "content_conf",
-    "bio", "hashtag",
+    "bio", "matched_hashtags", "hashtag",
 ]
 LIST_CSV_EXTRA = ["item_status", "note", "added_by", "added_at"]
 
@@ -59,7 +59,10 @@ def csv_response(rows, columns, filename):
     writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
     writer.writeheader()
     for r in rows:
-        writer.writerow(r)
+        row = dict(r)
+        if isinstance(row.get("matched_hashtags"), list):
+            row["matched_hashtags"] = " / ".join(row["matched_hashtags"])
+        writer.writerow(row)
     return Response(
         "\ufeff" + buf.getvalue(),
         mimetype="text/csv; charset=utf-8",
@@ -109,7 +112,8 @@ def api_search():
     creator = who(payload)
     payload.pop("user", None)
 
-    if not (payload.get("hashtag") or "").strip() and not payload.get("usernames"):
+    has_tags = bool(payload.get("hashtags")) or bool((payload.get("hashtag") or "").strip())
+    if not has_tags and not payload.get("usernames"):
         return jsonify({"error": "no_hashtag"}), 400
 
     # 利用者ごとの自己申告トークン。サーバーには保存せず、この検索の間だけ使う。
@@ -181,7 +185,9 @@ def api_export_job(job_id):
     job = db.get_job(job_id, with_results=True)
     if not job or not job.get("results"):
         return jsonify({"error": "no_results"}), 404
-    tag = (job["params"] or {}).get("hashtag", "search")
+    p = job["params"] or {}
+    tags = p.get("hashtags") or ([p["hashtag"]] if p.get("hashtag") else ["search"])
+    tag = "+".join(tags[:3])
     stamp = datetime.now().strftime("%Y%m%d")
     return csv_response(job["results"], CSV_COLUMNS, f"{safe_filename(tag)}_{stamp}.csv")
 

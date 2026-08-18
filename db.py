@@ -211,7 +211,8 @@ def record_accounts(rows):
             u = r.get("username")
             if not u:
                 continue
-            tags = " ".join(sorted({r.get("hashtag", "")} - {"", "(direct)"}))
+            matched = r.get("matched_hashtags") or [r.get("hashtag", "")]
+            tags = " ".join(sorted(set(matched) - {"", "(direct)"}))
             keys = r.get("content", "") if r.get("content") != "unknown" else ""
             old = c.execute("SELECT hashtags, content_keys, times_seen, first_seen "
                             "FROM accounts WHERE username=?", (u,)).fetchone()
