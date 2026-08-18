@@ -545,31 +545,46 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
             raise ValueError("hashtag missing")
         report("fetching_posts")
         posts = fetch_hashtag_posts(client, hashtag, params.get("posts_limit", 200))
+        print(f"[diag] hashtag='{hashtag}' raw posts fetched: {len(posts)}", file=sys.stderr)
+        if posts:
+            print(f"[diag] sample post keys: {sorted(posts[0].keys())}", file=sys.stderr)
         if not posts:
             return {"results": [], "stats": {"posts": 0, "accounts": 0, "matched": 0}}
         for p in posts:
-            u = p.get("ownerUsername")
+            u = p.get("ownerUsername") or p.get("owner_username")
+            if not u and isinstance(p.get("owner"), dict):
+                u = p["owner"].get("username")
             if u:
                 posts_by_user.setdefault(u, []).append(p)
+            elif len(posts_by_user) == 0 and posts.index(p) < 2:
+                print(f"[diag] post missing owner username, keys={sorted(p.keys())}", file=sys.stderr)
         usernames = list(posts_by_user.keys())
+        print(f"[diag] unique usernames extracted from posts: {len(usernames)}", file=sys.stderr)
         report(f"accounts_found:{len(usernames)}")
 
     profiles = fetch_profiles(client, usernames, progress=progress)
+    print(f"[diag] profiles fetched: {len(profiles)} / {len(usernames)} usernames requested", file=sys.stderr)
+    if profiles:
+        sample = next(iter(profiles.values()))
+        print(f"[diag] sample profile keys: {sorted(sample.keys())}", file=sys.stderr)
 
     report("filtering")
     cutoff = datetime.now(timezone.utc) - timedelta(days=params.get("active_days", 90))
     results = []
     candidates = []   # LLM 補正待ち。key がある場合はここに積んで後で並列処理する
+    drops = {}         # 診断用：どの条件で何件落ちたか
+    def drop(reason):
+        drops[reason] = drops.get(reason, 0) + 1
 
     for username, profile in profiles.items():
         if profile.get("private"):
-            continue
+            drop("private_account"); continue
 
         followers = profile.get("followersCount") or 0
         # 直接指定モードでは絞り込まない：ユーザー名を手で入れた＝この人を
         # 見たいという意図。フォームに残っている範囲設定で黙って消さない。
         if not direct and not (params.get("min_followers", 0) <= followers <= params.get("max_followers", 10**9)):
-            continue
+            drop("followers_range"); continue
 
         user_posts = dedupe_posts(posts_by_user.get(username, []) + (profile.get("latestPosts") or []))
 
@@ -579,11 +594,11 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
             # 活動期間の絞り込みはハッシュタグ検索のときだけ。ユーザー名を直接
             # 指定した場合は「この人を見たい」という意図なので落とさない。
             if not direct and last_post < cutoff:
-                continue
+                drop("active_days"); continue
             last_post_str = last_post.strftime("%Y-%m-%d")
         else:
             if not direct:
-                continue
+                drop("no_post_timestamps"); continue
             last_post_str = ""
 
         # エンゲージメント率は可能なら本人の最新投稿だけで計算する。
@@ -592,7 +607,7 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
         likes = [p.get("likesCount", 0) for p in er_source if p.get("likesCount")]
         engagement = round(sum(likes) / len(likes) / followers * 100, 2) if likes and followers else 0.0
         if not direct and engagement < params.get("min_engagement", 0):
-            continue
+            drop("min_engagement"); continue
 
         narration = estimate_narration(user_posts)
         gender = estimate_gender(profile)
@@ -611,44 +626,44 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
         # --- 絞り込み（直接指定モードでは一切適用しない：指名した人は必ず表示） ---
         if not direct:
             if params.get("account_type", "any") != "any" and atype != params["account_type"]:
-                continue
+                drop("account_type"); continue
             if params.get("has_contact") and not contact["has"]:
-                continue
+                drop("has_contact"); continue
             if params.get("verified_only") and not profile.get("verified"):
-                continue
+                drop("verified_only"); continue
             if params.get("has_pr") == "yes" and pr_count == 0:
-                continue
+                drop("has_pr_yes"); continue
             if params.get("has_pr") == "no" and pr_count > 0:
-                continue
+                drop("has_pr_no"); continue
             if params.get("min_reel_views") and avg_reel < params["min_reel_views"]:
-                continue
+                drop("min_reel_views"); continue
             if params.get("min_posts") and posts_count < params["min_posts"]:
-                continue
+                drop("min_posts"); continue
 
             pk = (params.get("profile_keyword") or "").lower()
             if pk and pk not in bio_raw.lower() and pk not in (profile.get("fullName") or "").lower():
-                continue
+                drop("profile_keyword"); continue
 
             ck = (params.get("caption_keyword") or "").lower()
             if ck and not any(ck in (p.get("caption") or "").lower() for p in user_posts):
-                continue
+                drop("caption_keyword"); continue
 
             mention = (params.get("mention") or "").lstrip("@").lower()
             if mention and mention not in collect_mentions(user_posts):
-                continue
+                drop("mention"); continue
 
             rg = (params.get("region") or "").lower()
             if rg and rg not in (bio_raw + " " + region).lower():
-                continue
+                drop("region"); continue
 
             exclude = params.get("exclude_usernames") or []
             if exclude and username in exclude:
-                continue
+                drop("exclude_saved"); continue
 
             # 投稿内容キーワードは LLM に依存しない（haystack はルール抽出）ので先に判定
             kws = [k.lower() for k in (params.get("content_keywords") or [])]
             if kws and not any(k in content["haystack"] for k in kws):
-                continue
+                drop("content_keywords"); continue
 
         if key:
             candidates.append({
@@ -664,20 +679,20 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
 
         if not direct:
             if params.get("gender", "any") != "any" and gender["value"] != params["gender"]:
-                continue
+                drop("gender"); continue
 
             if params.get("age_min") or params.get("age_max"):
                 nums = re.findall(r"\d+", age["value"])
                 if not nums:
-                    continue
+                    drop("age_unknown"); continue
                 a = int(nums[0])
                 if params.get("age_min") and a < params["age_min"]:
-                    continue
+                    drop("age_min"); continue
                 if params.get("age_max") and a > params["age_max"]:
-                    continue
+                    drop("age_max"); continue
 
             if params.get("narration_only") and narration["value"] not in ("yes", "partial"):
-                continue
+                drop("narration_only"); continue
 
         results.append(_build_row(hashtag, {
             "username": username, "profile": profile,
@@ -720,22 +735,24 @@ def run_search(params, apify_token=None, anthropic_key=None, use_llm=True, progr
 
             if not direct:
                 if params.get("gender", "any") != "any" and gender["value"] != params["gender"]:
-                    continue
+                    drop("gender_llm"); continue
                 if params.get("age_min") or params.get("age_max"):
                     nums = re.findall(r"\d+", age["value"])
                     if not nums:
-                        continue
+                        drop("age_unknown_llm"); continue
                     a = int(nums[0])
                     if params.get("age_min") and a < params["age_min"]:
-                        continue
+                        drop("age_min_llm"); continue
                     if params.get("age_max") and a > params["age_max"]:
-                        continue
+                        drop("age_max_llm"); continue
                 if params.get("narration_only") and c["narration"]["value"] not in ("yes", "partial"):
-                    continue
+                    drop("narration_only_llm"); continue
 
             results.append(_build_row(hashtag, c))
 
     results.sort(key=lambda r: r["followers"], reverse=True)
+    if not results:
+        print(f"[diag] ZERO RESULTS. profiles_in={len(profiles)} drop_reasons={drops}", file=sys.stderr)
     return {
         "results": results,
         "stats": {"posts": len(posts), "accounts": len(usernames), "matched": len(results)},

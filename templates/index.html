@@ -1,0 +1,1815 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instagram Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+JP:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#FAFAF7; --panel:#F4F4EF; --card:#FFFFFF;
+  --ink:#16171A; --dim:#6E6E67; --muted:#98988F;
+  --rule:#DEDED6; --hair:#EDEDE6;
+  --accent:#0F6B5C; --accent-soft:#E4EFEC;
+  --warn:#A8710F; --warn-soft:#F5EFE2; --danger:#9B3B2E;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --sans:"IBM Plex Sans JP","IBM Plex Sans",system-ui,sans-serif;
+  --bar:44px; --panelw:376px; --navw:196px; --lblw:118px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;padding:0;overflow:hidden}
+body{
+  background:var(--paper);color:var(--ink);
+  font-family:var(--sans);font-size:13px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+input,select,textarea,button{font-family:inherit;font-size:inherit;color:inherit}
+
+/* ===== app shell ===== */
+.app{height:100dvh;display:grid;grid-template-rows:var(--bar) 1fr}
+
+.bar{
+  display:flex;align-items:center;gap:22px;padding:0 14px;
+  border-bottom:1px solid var(--rule);background:var(--card);
+}
+.brand{font-family:var(--mono);font-size:13px;letter-spacing:-.01em;white-space:nowrap}
+.brand .dot{color:var(--accent)}
+.navtabs{display:flex;gap:2px}
+.navtabs button{
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;
+  padding:5px 12px;border:1px solid transparent;background:none;color:var(--dim);cursor:pointer;
+}
+.navtabs button[aria-selected="true"]{background:var(--ink);color:#fff}
+.navtabs .cnt{font-size:10px;opacity:.65;margin-left:5px}
+.bar .push{flex:1}
+.whoami{
+  width:104px;padding:5px 8px;font-family:var(--mono);font-size:11px;
+  border:1px solid var(--rule);background:var(--paper);
+}
+.langs{display:flex;border:1px solid var(--rule)}
+.langs button{
+  font-family:var(--mono);font-size:10px;padding:5px 9px;border:0;
+  border-right:1px solid var(--rule);background:var(--card);color:var(--dim);cursor:pointer;
+}
+.langs button:last-child{border-right:0}
+.langs button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
+
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+
+/* ===== two-pane views ===== */
+.view{display:grid;min-height:0}
+#view-search{grid-template-columns:var(--panelw) 1fr}
+#view-lists{grid-template-columns:var(--navw) 1fr}
+.view[hidden]{display:none}
+
+/* ===== left panel ===== */
+.panel{
+  display:flex;flex-direction:column;min-height:0;
+  background:var(--panel);border-right:1px solid var(--rule);
+}
+.panel-scroll{overflow-y:auto;padding:14px;flex:1;min-height:0}
+.panel-foot{
+  border-top:1px solid var(--rule);padding:10px 14px;background:var(--panel);
+  display:flex;flex-direction:column;gap:7px;
+}
+
+.plabel{
+  font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted);display:flex;align-items:center;gap:7px;margin:0 0 8px;
+}
+.plabel::after{content:"";flex:1;height:1px;background:var(--rule)}
+.plabel.mt{margin-top:20px}
+.tag{padding:2px 6px;font-size:8px;letter-spacing:.1em}
+.tag.hard{background:var(--accent-soft);color:var(--accent)}
+.tag.est{background:var(--warn-soft);color:var(--warn)}
+.pnote{font-size:10.5px;color:var(--dim);line-height:1.6;margin:-3px 0 10px}
+
+textarea#brief{
+  width:100%;height:88px;resize:none;padding:9px 10px;
+  font-size:12.5px;line-height:1.65;background:var(--card);
+  border:1px solid var(--rule);
+}
+.chips{display:flex;flex-direction:column;gap:4px;margin-top:7px}
+.chips button{
+  text-align:left;font-size:10.5px;padding:5px 8px;cursor:pointer;
+  background:transparent;border:1px dashed var(--rule);color:var(--dim);line-height:1.4;
+}
+.chips button:hover{border-color:var(--accent);border-style:solid;color:var(--accent)}
+
+.f{
+  display:grid;grid-template-columns:var(--lblw) 1fr;
+  align-items:center;column-gap:10px;row-gap:2px;margin-bottom:9px;
+}
+.f>label{
+  font-family:var(--sans);font-size:11.5px;font-weight:500;line-height:1.35;
+  color:var(--ink);letter-spacing:0;text-transform:none;
+}
+.f>label .unit{font-size:10.5px;color:var(--dim);font-weight:400}
+.f .help{
+  grid-column:2;font-size:10px;color:var(--dim);line-height:1.45;
+}
+.f input,.f select{
+  width:100%;padding:6px 8px;font-family:var(--mono);font-size:12px;
+  background:var(--card);border:1px solid var(--rule);
+}
+.f input::placeholder{color:#B9B9B0}
+.f.tall{align-items:start}
+.f.tall>label{padding-top:6px}
+.duo{display:flex;align-items:center;gap:6px}
+.duo em{color:var(--muted);font-style:normal;font-family:var(--mono)}
+/* .two は以前の上ラベル時代の名残。ラベルを左に置いた今、半分割すると
+   入力欄が 40px 程度まで潰れるため、通常の1行フィールドとして流す。 */
+.two{display:contents}
+.tick{display:flex;align-items:center;gap:7px;margin:11px 0 3px;font-size:12px}
+.tick input{width:14px;height:14px;accent-color:var(--accent);flex:none}
+textarea.mini{
+  width:100%;height:52px;resize:vertical;padding:6px 8px;
+  font-family:var(--mono);font-size:11.5px;background:var(--card);border:1px solid var(--rule);
+}
+.na{list-style:none;margin:0;padding:0}
+.na li{
+  font-size:10.5px;color:var(--muted);padding:4px 0 4px 13px;position:relative;line-height:1.45;
+}
+.na li::before{content:"×";position:absolute;left:0;color:var(--muted);opacity:.7}
+
+.btn{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;
+  padding:8px 14px;border:1px solid var(--ink);background:var(--ink);color:#fff;cursor:pointer;
+}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--rule)}
+.btn.ghost:hover{border-color:var(--ink)}
+.btn.xs{padding:5px 10px;font-size:10.5px}
+.btn:disabled{opacity:.38;cursor:not-allowed}
+.btn.wide{width:100%}
+
+.state{font-family:var(--mono);font-size:10.5px;color:var(--dim);min-height:15px;line-height:1.45}
+.state .live::before{
+  content:"";display:inline-block;width:5px;height:5px;margin-right:6px;
+  background:var(--accent);border-radius:50%;animation:blip 1.2s ease-in-out infinite;
+}
+@keyframes blip{0%,100%{opacity:1}50%{opacity:.18}}
+@media(prefers-reduced-motion:reduce){.state .live::before{animation:none}}
+.msg{font-size:11px;color:var(--danger);line-height:1.5}
+.msg:empty{display:none}
+
+/* ===== right pane ===== */
+.pane{display:flex;flex-direction:column;min-height:0;background:var(--paper)}
+.toolbar{
+  display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;
+  padding:7px 12px;border-bottom:1px solid var(--rule);background:var(--card);
+}
+.toolbar .tl{
+  font-family:var(--sans);font-size:11px;color:var(--dim);
+  align-self:center;white-space:nowrap;
+}
+.tf{display:flex;flex-direction:column;gap:2px}
+.tf>span{font-family:var(--sans);font-size:10px;color:var(--dim);white-space:nowrap}
+.toolbar input,.toolbar select{
+  padding:5px 7px;font-family:var(--mono);font-size:11px;
+  border:1px solid var(--rule);background:var(--paper);
+}
+.toolbar input[type=text]{width:170px}
+.toolbar input[type=number]{width:88px}
+.toolbar .push{flex:1}
+.toolbar .btn{align-self:flex-end}
+.tick.inline{margin:0;font-size:11px;color:var(--dim);white-space:nowrap}
+
+.scroller{flex:1;overflow:auto;min-height:0}
+table{width:100%;border-collapse:separate;border-spacing:0;font-family:var(--mono);font-size:11.5px}
+thead th{
+  position:sticky;top:0;z-index:2;background:var(--card);
+  text-align:left;font-weight:500;font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);padding:7px 9px;border-bottom:1px solid var(--rule);
+  white-space:nowrap;cursor:pointer;user-select:none;
+}
+thead th.fixed{cursor:default}
+thead th .ar{color:var(--accent);margin-left:3px}
+tbody td{padding:5px 9px;border-bottom:1px solid var(--hair);vertical-align:middle}
+tbody tr:hover td{background:var(--card)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.num.up{color:var(--accent)}
+.num.down{color:var(--danger)}
+.vf{color:var(--accent);font-size:9px;margin-left:3px}
+.acct{white-space:nowrap}
+.acct a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--accent)}
+.acct a:hover{color:var(--accent)}
+.bio{font-family:var(--sans);color:var(--dim);font-size:10.5px;max-width:300px;
+     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cf{display:inline-block;width:5px;height:5px;margin-left:5px;vertical-align:middle;border:1px solid var(--muted)}
+.cf.high{background:var(--accent);border-color:var(--accent)}
+.cf.medium{background:var(--muted)}
+.cf.low{background:transparent}
+.cf.unknown{border-style:dotted;opacity:.45}
+.tick.row{margin:0}
+.plus{
+  font-family:var(--mono);font-size:11px;padding:2px 8px;cursor:pointer;
+  background:transparent;border:1px solid var(--rule);color:var(--dim);
+}
+.plus:hover{border-color:var(--accent);color:var(--accent)}
+.x{border:0;background:none;color:var(--muted);cursor:pointer;font-family:var(--mono);padding:2px 5px}
+.x:hover{color:var(--danger)}
+.sel{font-family:var(--mono);font-size:10.5px;padding:2px 4px;border:1px solid var(--rule);background:var(--paper)}
+.note{
+  font-family:var(--sans);font-size:11px;padding:3px 5px;width:100%;min-width:120px;
+  border:1px solid transparent;background:transparent;
+}
+.note:hover{border-color:var(--hair)}
+.note:focus{border-color:var(--accent);background:var(--card)}
+
+.blank{padding:44px 16px;text-align:center;color:var(--dim);font-size:12px;line-height:1.7}
+.foot{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:6px 140px 6px 12px;border-top:1px solid var(--rule);background:var(--card);
+  font-family:var(--mono);font-size:10px;color:var(--dim);
+}
+.foot b{color:var(--ink);font-weight:500}
+.foot .push{flex:1}
+.foot .key{display:flex;align-items:center;gap:4px}
+
+/* ===== lists nav ===== */
+.lnav{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--rule)}
+.lsearch{padding:7px;border-bottom:1px solid var(--rule);background:var(--card)}
+.lsearch input{width:100%;padding:5px 8px;font-size:11.5px;border:1px solid var(--rule);background:var(--paper)}
+.lnav-scroll{flex:1;overflow-y:auto;min-height:0}
+
+.fold{border-bottom:1px solid var(--hair)}
+.fold>summary{
+  list-style:none;cursor:pointer;padding:6px 10px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--dim);display:flex;align-items:center;gap:6px;
+}
+.fold>summary::-webkit-details-marker{display:none}
+.fold>summary::before{content:"▸";font-size:9px;color:var(--muted);transition:transform .12s}
+.fold[open]>summary::before{transform:rotate(90deg)}
+.fold>summary:hover{background:var(--card)}
+.fold .fn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fold .tot{font-size:9px;color:var(--muted)}
+.fold .fx{opacity:0;border:0;background:none;color:var(--muted);cursor:pointer;font-family:var(--mono);font-size:10px;padding:0 3px}
+.fold>summary:hover .fx{opacity:1}
+.fold .fx:hover{color:var(--danger)}
+
+.lnav button.li{
+  display:flex;align-items:center;gap:6px;width:100%;text-align:left;
+  padding:6px 10px 6px 22px;border:0;border-bottom:1px solid var(--hair);
+  background:none;cursor:pointer;font-size:12px;
+}
+.lnav button.li[aria-current="true"]{background:var(--card);box-shadow:inset 2px 0 0 var(--accent)}
+.lnav button.li .ln{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lnav .n{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.loose button.li{padding-left:10px}
+.lnew{display:flex;border-top:1px solid var(--rule)}
+.lnew input{flex:1;min-width:0;padding:7px 10px;border:0;background:var(--card);font-size:11.5px}
+.lnew button{border:0;border-left:1px solid var(--rule);background:var(--panel);
+             padding:0 12px;cursor:pointer;font-family:var(--mono);color:var(--accent)}
+
+.saved{
+  font-family:var(--mono);font-size:9px;padding:1px 5px;margin-left:5px;
+  background:var(--accent-soft);color:var(--accent);white-space:nowrap;
+}
+.plus.done{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.crumb{font-family:var(--mono);font-size:10px;color:var(--muted)}
+
+/* ===== overlays ===== */
+.toast{
+  position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
+  background:var(--ink);color:#fff;font-family:var(--mono);font-size:11px;
+  padding:9px 15px;opacity:0;pointer-events:none;transition:opacity .16s;z-index:50;
+}
+.toast.on{opacity:1}
+dialog{border:1px solid var(--rule);background:var(--card);padding:18px;max-width:300px;font-size:12.5px}
+dialog::backdrop{background:rgba(22,23,26,.3)}
+dialog h3{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.08em;
+          text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+dialog select,dialog input{width:100%;padding:7px 9px;border:1px solid var(--rule);
+                           background:var(--paper);margin-bottom:9px;font-size:12.5px}
+.dlgrow{display:flex;justify-content:flex-end;gap:7px}
+
+/* ===== 透かし ===== */
+.wmark{
+  position:fixed;right:10px;bottom:8px;z-index:40;
+  font-family:var(--mono);font-size:9.5px;color:var(--muted);
+  text-decoration:none;opacity:.55;letter-spacing:.02em;
+  background:var(--paper);padding:2px 5px;
+}
+.wmark:hover{opacity:1;color:var(--accent)}
+
+/* ===== 品質バッジ ===== */
+.q{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;cursor:pointer}
+.q.ok{background:var(--accent)}
+.q.warn{background:var(--warn)}
+.q.risk{background:var(--danger)}
+.qbadge{font-family:var(--mono);font-size:10px;padding:2px 8px;vertical-align:middle}
+.qbadge.ok{background:var(--accent-soft);color:var(--accent)}
+.qbadge.warn{background:var(--warn-soft);color:var(--warn)}
+.qbadge.risk{background:#F7ECEA;color:var(--danger)}
+
+/* ===== アカウント詳細ドロワー ===== */
+dialog.drawer{
+  position:fixed;inset:0 0 0 auto;height:100dvh;max-height:100dvh;width:400px;max-width:92vw;
+  margin:0;border:0;border-left:1px solid var(--rule);background:var(--paper);
+  padding:18px 20px;overflow-y:auto;
+}
+dialog.drawer::backdrop{background:rgba(22,23,26,.22)}
+.drawer-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px}
+.drawer-head a{font-family:var(--mono);font-size:16px;color:var(--ink);text-decoration:none;border-bottom:1px solid var(--accent)}
+.drawer-head a:hover{color:var(--accent)}
+.afull{font-size:12px;color:var(--dim);margin-left:8px}
+.abio{font-size:12px;color:var(--dim);line-height:1.6;margin:4px 0 12px}
+.astats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);margin-bottom:16px}
+.astats>div{background:var(--card);padding:9px 10px}
+.astats b{display:block;font-family:var(--mono);font-size:15px;font-weight:500}
+.astats span{font-size:10px;color:var(--dim)}
+.aflags{list-style:none;margin:0 0 14px;padding:0}
+.aflags li{font-size:11.5px;padding:5px 0 5px 15px;position:relative;line-height:1.5;color:var(--ink)}
+.aflags li::before{content:"⚑";position:absolute;left:0;color:var(--danger);font-size:10px}
+.aflags li.clean{color:var(--dim)}
+.aflags li.clean::before{content:"✓";color:var(--accent)}
+.apills{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px}
+.apills span{font-size:10.5px;padding:3px 9px;background:var(--accent-soft);color:var(--accent);font-family:var(--mono)}
+.apills .none{background:transparent;color:var(--muted)}
+.asim{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+.asim button{
+  display:flex;justify-content:space-between;gap:8px;text-align:left;padding:7px 10px;
+  background:var(--card);border:1px solid var(--rule);cursor:pointer;font-family:var(--mono);font-size:11.5px;
+}
+.asim button:hover{border-color:var(--accent)}
+.asim .sf{color:var(--dim);font-size:10.5px}
+#aChart{margin-bottom:14px}
+#aChart svg{display:block;width:100%;height:72px;background:var(--card);border:1px solid var(--rule)}
+#aChart .empty-chart{font-size:11px;color:var(--muted);padding:14px;background:var(--card);border:1px solid var(--rule)}
+
+/* ===== narrow screens: stacking is correct here ===== */
+@media(max-width:880px){
+  html,body{overflow:auto}
+  .app{height:auto}
+  #view-search,#view-lists{grid-template-columns:1fr}
+  .panel,.lnav{border-right:0;border-bottom:1px solid var(--rule)}
+  .panel-scroll,.lnav-scroll{overflow:visible}
+  .scroller{overflow:visible}
+  thead th{position:static}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<div class="bar">
+  <span class="brand">influencer<span class="dot">·</span>radar</span>
+  <div class="navtabs" role="tablist">
+    <button role="tab" aria-selected="true" data-view="search" data-i18n="tabSearch"></button>
+    <button role="tab" aria-selected="false" data-view="lists">
+      <span data-i18n="tabLists"></span><span class="cnt" id="listCnt"></span>
+    </button>
+    <button role="tab" aria-selected="false" data-view="db">
+      <span data-i18n="tabDb"></span><span class="cnt" id="dbCnt"></span>
+    </button>
+  </div>
+  <span class="push"></span>
+  <input class="whoami" id="whoami">
+  <button class="btn ghost xs" id="setupBtn" data-i18n="setupBtn"></button>
+  <div class="langs" role="group" aria-label="Language">
+    <button data-lang="ja" aria-pressed="true">JA</button>
+    <button data-lang="en" aria-pressed="false">EN</button>
+    <button data-lang="zh" aria-pressed="false">ZH</button>
+  </div>
+</div>
+
+<!-- ══════════ SEARCH ══════════ -->
+<div class="view" id="view-search">
+
+  <div class="panel">
+    <div class="panel-scroll">
+      <p class="plabel"><span data-i18n="briefTitle"></span></p>
+      <p class="pnote" data-i18n="hBrief"></p>
+      <textarea id="brief"></textarea>
+      <button class="btn ghost xs wide" id="parseBtn" style="margin-top:7px" data-i18n="parseBtn"></button>
+      <p class="pnote" id="parseHint" style="margin-top:7px"></p>
+      <div class="chips" id="chips"></div>
+      <p class="msg" id="parseMsg"></p>
+
+      <p class="plabel mt"><span class="tag hard" data-i18n="hardBadge"></span></p>
+      <p class="pnote" data-i18n="hardNote"></p>
+      <div class="f"><label data-i18n="fHashtag"></label><input id="hashtag">
+        <span class="help" data-i18n="hHashtag"></span></div>
+
+      <div class="f"><label data-i18n="fFollowers"></label>
+        <div class="duo"><input id="minF" type="number" value="10000"><em>–</em><input id="maxF" type="number" value="70000"></div>
+        <span class="help" data-i18n="hFollowers"></span>
+      </div>
+
+      <div class="f"><label data-i18n="fActive"></label>
+        <select id="activeDays">
+          <option value="" data-i18n="acAny"></option>
+          <option value="90" selected data-i18n="ac3m"></option>
+          <option value="180" data-i18n="ac6m"></option>
+        </select>
+        <span class="help" data-i18n="hActive"></span>
+      </div>
+
+      <div class="f"><label data-i18n="fEr"></label><input id="minEr" type="number" step="0.1" value="0">
+        <span class="help" data-i18n="hEr"></span></div>
+
+      <div class="f"><label data-i18n="fReelViews"></label><input id="minReel" type="number">
+        <span class="help" data-i18n="hReelViews"></span></div>
+
+      <div class="f"><label data-i18n="fPosts"></label><input id="minPosts" type="number">
+        <span class="help" data-i18n="hPosts"></span></div>
+
+      <div class="f"><label data-i18n="fAccountType"></label>
+        <select id="accountType">
+          <option value="any" data-i18n="atAny"></option>
+          <option value="business" data-i18n="atBiz"></option>
+          <option value="creator" data-i18n="atCreator"></option>
+          <option value="personal" data-i18n="atPersonal"></option>
+        </select>
+        <span class="help" data-i18n="hAccountType"></span>
+      </div>
+
+      <div class="f"><label data-i18n="fProfileKw"></label><input id="profileKw">
+        <span class="help" data-i18n="hProfileKw"></span></div>
+
+      <div class="f"><label data-i18n="fCaptionKw"></label><input id="captionKw">
+        <span class="help" data-i18n="hCaptionKw"></span></div>
+
+      <div class="f"><label data-i18n="fMention"></label><input id="mention">
+        <span class="help" data-i18n="hMention"></span></div>
+
+      <div class="f"><label data-i18n="fPr"></label>
+        <select id="hasPr">
+          <option value="any" data-i18n="prAny"></option>
+          <option value="yes" data-i18n="prYes"></option>
+          <option value="no" data-i18n="prNo"></option>
+        </select>
+        <span class="help" data-i18n="hPr"></span>
+      </div>
+
+      <label class="tick"><input type="checkbox" id="hasContact"><span data-i18n="fContact"></span></label>
+      <label class="tick"><input type="checkbox" id="verifiedOnly"><span data-i18n="fVerified"></span></label>
+      <label class="tick"><input type="checkbox" id="excludeSaved"><span data-i18n="fExclude"></span></label>
+
+      <p class="plabel mt"><span class="tag est" data-i18n="estBadge"></span></p>
+      <p class="pnote" data-i18n="estNote"></p>
+      <div class="two">
+        <div class="f"><label data-i18n="fGender"></label>
+          <select id="gender">
+            <option value="any" data-i18n="gAny"></option>
+            <option value="female" data-i18n="gF"></option>
+            <option value="male" data-i18n="gM"></option>
+          </select>
+        </div>
+        <div class="f"><label data-i18n="fAge"></label>
+          <div class="duo"><input id="ageMin" type="number"><em>–</em><input id="ageMax" type="number"></div>
+          <span class="help" data-i18n="hAgeF"></span>
+        </div>
+      </div>
+      <p class="pnote" data-i18n="hAge"></p>
+      <div class="f"><label data-i18n="fContent"></label><input id="contentKw">
+        <span class="help" data-i18n="hContent"></span></div>
+      <div class="f"><label data-i18n="fRegion"></label><input id="region">
+        <span class="help" data-i18n="hRegion"></span></div>
+      <label class="tick"><input type="checkbox" id="narration"><span data-i18n="fNarration"></span></label>
+      <p class="pnote" data-i18n="hNarration"></p>
+
+      <p class="plabel mt"><span data-i18n="directTitle"></span></p>
+      <p class="pnote" data-i18n="directNote"></p>
+      <div class="f tall"><label data-i18n="fUsernames"></label>
+        <textarea id="usernames" class="mini"></textarea>
+        <span class="help" data-i18n="hDirect"></span></div>
+
+      <p class="plabel mt"><span data-i18n="naTitle"></span></p>
+      <p class="pnote" data-i18n="naNote"></p>
+      <ul class="na" id="naList"></ul>
+    </div>
+
+    <div class="panel-foot">
+      <label class="tick" style="margin:0"><input type="checkbox" id="useLlm" checked><span data-i18n="useLlm"></span></label>
+      <button class="btn wide" id="runBtn" data-i18n="runBtn"></button>
+      <p class="state" id="state"></p>
+      <p class="msg" id="runMsg"></p>
+    </div>
+  </div>
+
+  <div class="pane">
+    <div class="toolbar">
+      <span class="tl" data-i18n="refineLead"></span>
+      <label class="tf"><span data-i18n="rqL"></span><input type="text" id="rq" title=""></label>
+      <label class="tf"><span data-i18n="rMinFL"></span><input type="number" id="rMinF"></label>
+      <label class="tf"><span data-i18n="rMinErL"></span><input type="number" id="rMinEr" step="0.1"></label>
+      <label class="tf"><span data-i18n="fGender"></span>
+        <select id="rGender">
+          <option value="" data-i18n="gAny"></option>
+          <option value="female" data-i18n="gF"></option>
+          <option value="male" data-i18n="gM"></option>
+        </select>
+      </label>
+      <label class="tf"><span data-i18n="colNarr"></span>
+        <select id="rNarr">
+          <option value="" data-i18n="nAny"></option>
+          <option value="yes" data-i18n="nYes"></option>
+          <option value="no" data-i18n="nNo"></option>
+        </select>
+      </label>
+      <span class="push"></span>
+      <button class="btn ghost xs" id="saveSelBtn" data-i18n="saveSel"></button>
+      <button class="btn ghost xs" id="csvBtn" data-i18n="csvBtn"></button>
+    </div>
+    <div class="scroller">
+      <table><thead><tr id="rhead"></tr></thead><tbody id="rbody"></tbody></table>
+    </div>
+    <div class="foot" id="rfoot"></div>
+  </div>
+</div>
+
+<!-- ══════════ LISTS ══════════ -->
+<div class="view" id="view-lists" hidden>
+  <div class="lnav">
+    <div class="lsearch">
+      <input type="search" id="gq">
+    </div>
+    <div class="lnav-scroll" id="lnav"></div>
+    <div class="lnew">
+      <input id="newName">
+      <button id="newBtn" title="+">+</button>
+    </div>
+    <div class="lnew">
+      <input id="newFolder">
+      <button id="newFolderBtn" title="+">+</button>
+    </div>
+  </div>
+
+  <div class="pane">
+    <div class="toolbar">
+      <strong id="lTitle" style="font-family:var(--sans);font-size:13px;font-weight:600"></strong>
+      <label class="tf"><span data-i18n="rqL"></span><input type="text" id="lq"></label>
+      <label class="tf"><span data-i18n="colStatus"></span><select id="lStatus"></select></label>
+      <span class="push"></span>
+      <label class="tf"><span data-i18n="moveToL"></span><select id="moveTo"></select></label>
+      <button class="btn ghost xs" id="lCsv" data-i18n="csvBtn"></button>
+      <button class="btn ghost xs" id="lRename" data-i18n="rename"></button>
+      <button class="btn ghost xs" id="lDel" data-i18n="deleteList"></button>
+    </div>
+    <div class="scroller">
+      <table><thead><tr id="lhead"></tr></thead><tbody id="lbody"></tbody></table>
+    </div>
+    <div class="foot" id="lfoot"></div>
+  </div>
+</div>
+
+<!-- ══════════ DATABASE ══════════ -->
+<div class="view" id="view-db" hidden style="grid-template-columns:1fr">
+  <div class="pane">
+    <div class="toolbar">
+      <span class="tl" data-i18n="dbLead"></span>
+      <label class="tf"><span data-i18n="rqL"></span><input type="text" id="dbq"></label>
+      <label class="tf"><span data-i18n="rMinFL"></span><input type="number" id="dbMinF"></label>
+      <label class="tf"><span data-i18n="dbMaxFL"></span><input type="number" id="dbMaxF"></label>
+      <label class="tf"><span data-i18n="dbSortL"></span>
+        <select id="dbSort">
+          <option value="followers" data-i18n="dbSortF"></option>
+          <option value="engagement" data-i18n="dbSortE"></option>
+          <option value="last_seen" data-i18n="dbSortL2"></option>
+          <option value="times_seen" data-i18n="dbSortT"></option>
+        </select>
+      </label>
+      <span class="push"></span>
+      <span class="state" id="dbNote"></span>
+    </div>
+    <div class="scroller">
+      <table><thead><tr id="dbhead"></tr></thead><tbody id="dbbody"></tbody></table>
+    </div>
+    <div class="foot" id="dbfoot"></div>
+  </div>
+</div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<a class="wmark" href="https://github.com/xhqi01/influencer-radar-insta" target="_blank" rel="noopener">
+  github.com/xhqi01/influencer-radar-insta
+</a>
+
+<!-- トークン設定（各自の API キー。ブラウザにのみ保存） -->
+<dialog id="setup">
+  <h3 data-i18n="setupTitle"></h3>
+  <p class="pnote" data-i18n="setupNote"></p>
+  <div class="f tall" style="grid-template-columns:1fr;margin-bottom:10px">
+    <label data-i18n="setupApify"></label>
+    <span class="help" data-i18n="setupApifyHelp"></span>
+    <input id="tokApify" type="password" autocomplete="off">
+  </div>
+  <div class="f tall" style="grid-template-columns:1fr;margin-bottom:10px">
+    <label data-i18n="setupAnthropic"></label>
+    <span class="help" data-i18n="setupAnthropicHelp"></span>
+    <input id="tokAnthropic" type="password" autocomplete="off">
+  </div>
+  <p class="pnote" data-i18n="setupPrivacy"></p>
+  <div class="dlgrow">
+    <button class="btn ghost xs" id="setupCancel" data-i18n="cancel"></button>
+    <button class="btn xs" id="setupSave" data-i18n="save"></button>
+  </div>
+</dialog>
+
+<!-- アカウント詳細ドロワー -->
+<dialog id="acct" class="drawer">
+  <div class="drawer-head">
+    <div>
+      <a id="aName" href="#" target="_blank" rel="noopener"></a>
+      <span id="aFull" class="afull"></span>
+      <span id="aQual" class="qbadge"></span>
+    </div>
+    <button class="x" id="aClose">×</button>
+  </div>
+  <p class="abio" id="aBio"></p>
+  <div class="astats" id="aStats"></div>
+
+  <p class="plabel" data-i18n="dHistory"></p>
+  <div id="aChart"></div>
+
+  <p class="plabel" data-i18n="dQuality"></p>
+  <ul class="aflags" id="aFlags"></ul>
+
+  <p class="plabel" data-i18n="dInLists"></p>
+  <div class="apills" id="aLists"></div>
+
+  <p class="plabel" data-i18n="dSimilar"></p>
+  <div class="asim" id="aSim"></div>
+</dialog>
+
+<dialog id="dlg">
+  <h3 data-i18n="saveTitle"></h3>
+  <select id="dlgList"></select>
+  <input id="dlgNew">
+  <div class="dlgrow">
+    <button class="btn ghost xs" id="dlgCancel" data-i18n="cancel"></button>
+    <button class="btn xs" id="dlgSave" data-i18n="save"></button>
+  </div>
+</dialog>
+
+<script>
+// AI 機能は各利用者が自分の Anthropic キーを設定しているかで決まる（hasAI()）
+
+const I18N = {
+ja:{
+  whoamiPh:"名前", tabSearch:"検索", tabLists:"リスト",
+  briefTitle:"やりたいこと",
+  briefPh:"日本の宅トレ系の女性を探したい。フォロワー1万〜7万、ちゃんと喋ってる動画を出してる人。最近も動いてるアカウントで。",
+  parseBtn:"条件に変換", parseHint:"書いた文章を下の条件に落とし込みます",
+  hardBadge:"実データ", hardNote:"API から直接取得。そのまま絞り込みに使える。",
+  estBadge:"推定", estNote:"API に無い項目。bio・キャプション・音源からの推定なので、必ず目視確認が必要。", fFollowers:"フォロワー数", fActive:"何日以内に投稿", fGender:"性別", fAge:"年齢", fNarration:"ナレーションありのみ",
+  gAny:"性別すべて", gF:"女性", gM:"男性",
+  nAny:"ナレーションすべて", nYes:"ナレーションあり", nNo:"ナレーションなし",
+  useLlm:"AI 推定を使う", runBtn:"検索する", csvBtn:"CSV",
+  rqPh:"アカウント・bio で検索", rMinFPh:"最低フォロワー", rMinErPh:"最低 ER%",
+  saveSel:"選択を保存", saveTitle:"リストに保存",
+  newListPh:"新しいリスト名", cancel:"やめる", save:"保存",
+  rename:"名前変更", deleteList:"削除", stAll:"ステータスすべて",
+  statuses:{new:"未対応",contacted:"連絡済",negotiating:"交渉中",approved:"採用",rejected:"見送り"},
+  examples:["宅トレ系の女性、1万〜5万、喋ってる動画",
+            "プロテイン紹介の男性、3万〜7万、直近1ヶ月に投稿",
+            "ヨガ・ピラティス、20代、ER 3%以上"],
+  cols:{username:"アカウント",followers:"フォロワー",engagement:"ER%",last_post:"最終投稿",
+        narration:"ナレーション",gender:"性別",age:"年齢",content:"投稿内容",bio:"bio",
+        note:"メモ",item_status:"ステータス",added_by:"追加者"},
+  narr:{yes:"あり",partial:"一部",no:"なし",unknown:"—"},
+  gen:{female:"女性",male:"男性",unknown:"—"},
+  stages:{queued:"待機中",fetching_posts:"投稿を取得中",fetching_profiles:"プロフィールを取得中",filtering:"絞り込み中",done:"完了",error:"エラー"},
+  found:n=>`アカウント ${n} 件、プロフィール取得中`,
+  prof:(a,b)=>`プロフィール取得中 ${a}/${b}`,
+  foot:(p,a,m,s)=>`投稿 <b>${p}</b> ／ アカウント <b>${a}</b> ／ 合致 <b>${m}</b> ／ 表示 <b>${s}</b>`,
+  lfoot:(n,s)=>`${n} 件 ／ 表示 <b>${s}</b>`,
+  keyline:"確度", keyHigh:"高", keyMed:"中", keyLow:"低", keyUnk:"不明",
+  blankStart:"左の条件を決めて「検索する」を押してください。",
+  blankNone:"条件に合うアカウントがありませんでした。フォロワー範囲を広げるか、別のハッシュタグを試してください。",
+  blankList:"まだ誰も入っていません。検索結果から追加してください。",
+  blankNoList:"リストがありません。左下の欄で作成してください。",
+  errParse:"変換に失敗：", errRun:"検索に失敗：", errNoHashtag:"ハッシュタグを入力してください",
+  gqPh:"保存済みから検索",
+  newFolderPh:"新しいフォルダ",
+  uncat:"未分類",
+  moveTo:"フォルダへ移動",
+  delFolder:"フォルダを削除",
+  savedIn:"保存済み",
+  allSaved:"保存済みすべて",
+  inList:"リスト",
+  confirmDelF:n=>`フォルダ「${n}」を削除します。中のリストは未分類に戻り、消えません。`,
+  blankSearch:"該当する保存済みアカウントはありません。",
+  gfoot:n=>`横断検索：${n} 件`,
+  fAccountType:"アカウントタイプ",
+  atAny:"すべて",
+  atBiz:"ビジネス",
+  atCreator:"クリエイター",
+  atPersonal:"個人",
+  fPr:"PR・タイアップ投稿",
+  prAny:"指定なし",
+  prYes:"PR投稿あり",
+  prNo:"PR投稿なし",
+  fContact:"連絡先(メール)が公開されている人だけ",
+  fVerified:"認証アカウントのみ",
+  fExclude:"保存済みリストの人を除外する",
+  directTitle:"特定アカウントを直接チェック",
+  directNote:"ユーザー名を改行区切りで入力（最大15件）。入力するとハッシュタグ検索の代わりにこの人たちだけを取得します。",
+  naTitle:"このツールでは取得できない条件",
+  naNote:"フォロワー側の属性は Instagram が本人の同意なしに公開していないため、どんな方法でも取得できません。",
+  naItems:["フォロワーの地域構成","フォロワーの性別比","フォロワーの年齢層","フォロワーの興味関心","フォロワーのアクティブ率"],
+  colGrowth:"成長率",
+  colType:"種別",
+  colReel:"平均再生",
+  colPr:"PR",
+  colEmail:"連絡先",
+  fHashtag:"ハッシュタグ",
+  fFollowers:"フォロワー数（人）",
+  fActive:"最終投稿（日以内）",
+  fEr:"最低エンゲージメント率（%）",
+  fReelViews:"リール平均再生（回以上）",
+  fPosts:"投稿数（件以上）",
+  fProfileKw:"プロフィール文に含む語",
+  fCaptionKw:"投稿キャプションに含む語",
+  fMention:"この相手をメンションしている",
+  hAge:"年齢は bio に書いてある人しか判定できません。指定すると候補が大きく減ります",
+  fContent:"投稿内容キーワード（カンマ区切り）",
+  fRegion:"地域",
+  hNarration:"リールでオリジナル音源を使っている比率から推定します",
+  refineLead:"この結果をさらに絞る：",
+  rqL:"キーワード",
+  rMinFL:"最低フォロワー",
+  rMinErL:"最低ER%",
+  colNarr:"ナレーション",
+  colStatus:"ステータス",
+  moveToL:"フォルダへ移動",
+  whoamiL:"あなたの名前",
+  acAny:"指定なし",
+  ac3m:"3ヶ月以内",
+  ac6m:"6ヶ月以内",
+  hHashtag:"#は不要。1つだけ。例：筋トレ",
+  hFollowers:"左が最少、右が最多",
+  hActive:"これより古いアカウントは除外",
+  hEr:"平均いいね÷フォロワー。3以上が目安",
+  hReelViews:"空欄=指定なし。例：10000",
+  hPosts:"空欄=指定なし。例：100",
+  hAccountType:"ビジネス/クリエイターは連絡先が載っていることが多い",
+  hProfileKw:"bio に書かれている語。例：CM、モデル、事務所",
+  hCaptionKw:"投稿本文に出てくる語。例：キャンペーン",
+  hMention:"競合ブランドを入れると、そこと組んだ人が出ます。例：nike",
+  hPr:"過去にPR案件を受けたことがあるか",
+  hContent:"カンマ区切り。例：宅トレ, 減量",
+  hRegion:"bio に地名がある場合のみ。例：東京",
+  hAgeF:"例：20 〜 35。bio に年齢を書いている人しか判定できません",
+  hBrief:"日本語でそのまま書けます。下の条件に自動で反映されます",
+  hDirect:"1行に1アカウント。最大15件",
+  rqPh2:"アカウント名・bio で絞り込み",
+  fUsernames:"ユーザー名",
+  llmStage:(a,b)=>`AI 推定中 ${a}/${b}`,
+  tabDb:"データベース",
+  dbLead:"これまでの検索で取得した全アカウント。ここの閲覧・検索は Apify を消費しません：",
+  dbMaxFL:"最高フォロワー",
+  dbSortL:"並び順",
+  dbSortF:"フォロワー順",
+  dbSortE:"ER順",
+  dbSortL2:"最終確認順",
+  dbSortT:"出現回数順",
+  dbTags:"確認済みタグ",
+  dbTimes:"出現回数",
+  dbLast:"最終確認",
+  dbEmpty:"まだ空です。検索を実行すると、取得した全アカウントが自動でここに貯まります。",
+  dbFree:"閲覧は0円（Apify 消費なし）",
+  dbFoot:(t,s)=>`蓄積 <b>${t}</b> アカウント ／ 表示 <b>${s}</b>`,
+  colQuality:"品質",
+  q_ok:"問題なし",
+  q_warn:"注意",
+  q_risk:"要確認",
+  flag_low_er:"フォロワー数に対してエンゲージメント率が異常に低い（フォロワー買いの典型的な兆候）",
+  flag_mass_following:"フォロー数が4,000超（フォロバ稼ぎの可能性）",
+  flag_weak_ratio:"フォロワー÷フォロー比が低く、相互フォローで膨らんでいる可能性",
+  flag_few_posts:"投稿数が極端に少ないのにフォロワーが多い",
+  flag_growth_spike:"フォロワーが不自然に急増した時期がある（1日+5%超）",
+  flagClean:"公開データからは危険信号なし",
+  dHistory:"フォロワー推移（自前の観測データ）",
+  dHistoryNone:"まだ観測1回分。別の日に再度検索すると推移グラフが育ちます。",
+  dQuality:"品質シグナル",
+  dInLists:"入っているリスト",
+  dNoLists:"未保存",
+  dSimilar:"類似アカウント（データベース内）",
+  dSimilarNone:"まだ比較対象が足りません。検索を重ねると精度が上がります。",
+  dPosts:"投稿数",
+  setupBtn:"API設定",
+  setupTitle:"あなたの API トークン",
+  setupNote:"このツールは各自のトークンで動きます。検索の費用は自分の Apify アカウントに課金されます。",
+  setupApify:"Apify APIトークン（必須）",
+  setupApifyHelp:"apify.com → Settings → Integrations で取得。無料枠 $5 から使えます",
+  setupAnthropic:"Anthropic APIキー（任意）",
+  setupAnthropicHelp:"AI 入力欄と性別・投稿内容の推定精度向上に使用。無くても動きます",
+  setupPrivacy:"トークンはこのブラウザにのみ保存され、サーバーには保存されません。共有PCでは使い終わったら消してください。",
+  setupSaved:"保存しました（このブラウザのみ）",
+  errNoToken:"Apify トークンが未設定です。右上の「API設定」から自分のトークンを入れてください",
+  parseHintNoAI:"AI 変換には右上の「API設定」で Anthropic キーの設定が必要です",
+  savedTo:n=>`「${n}」に保存しました`, selectFirst:"先に行を選択してください",
+  confirmDel:n=>`リスト「${n}」を削除します。よろしいですか？`, dupName:"同じ名前のリストがあります"
+},
+en:{
+  whoamiPh:"Name", tabSearch:"Search", tabLists:"Lists",
+  briefTitle:"What you're after",
+  briefPh:"Women posting home-workout content in Japan, 10k–70k followers, ideally ones who talk on camera, still posting recently.",
+  parseBtn:"Turn into filters", parseHint:"Your description becomes the filters below",
+  hardBadge:"Real data", hardNote:"Straight from the API. Safe to filter on.",
+  estBadge:"Estimated", estNote:"Not in the API. Inferred from bio, captions and audio — check each account yourself.", fFollowers:"Followers", fActive:"Posted within (days)", fGender:"Gender", fAge:"Age", fNarration:"With narration only",
+  gAny:"Any gender", gF:"Female", gM:"Male",
+  nAny:"Any narration", nYes:"Has narration", nNo:"No narration",
+  useLlm:"Use AI inference", runBtn:"Run search", csvBtn:"CSV",
+  rqPh:"Search account or bio", rMinFPh:"Min followers", rMinErPh:"Min ER%",
+  saveSel:"Save selected", saveTitle:"Save to list",
+  newListPh:"New list name", cancel:"Cancel", save:"Save",
+  rename:"Rename", deleteList:"Delete", stAll:"All statuses",
+  statuses:{new:"New",contacted:"Contacted",negotiating:"In talks",approved:"Approved",rejected:"Passed"},
+  examples:["Home workout, women, 10k–50k, talks on camera",
+            "Men reviewing protein, 30k–70k, posted this month",
+            "Yoga and pilates, twenties, ER above 3%"],
+  cols:{username:"Account",followers:"Followers",engagement:"ER%",last_post:"Last post",
+        narration:"Narration",gender:"Gender",age:"Age",content:"Content",bio:"Bio",
+        note:"Note",item_status:"Status",added_by:"Added by"},
+  narr:{yes:"Yes",partial:"Some",no:"No",unknown:"—"},
+  gen:{female:"Female",male:"Male",unknown:"—"},
+  stages:{queued:"Queued",fetching_posts:"Fetching posts",fetching_profiles:"Fetching profiles",filtering:"Filtering",done:"Done",error:"Error"},
+  found:n=>`${n} accounts, loading profiles`,
+  prof:(a,b)=>`Loading profiles ${a}/${b}`,
+  foot:(p,a,m,s)=>`Posts <b>${p}</b> · Accounts <b>${a}</b> · Matched <b>${m}</b> · Showing <b>${s}</b>`,
+  lfoot:(n,s)=>`${n} saved · showing <b>${s}</b>`,
+  keyline:"Confidence", keyHigh:"high", keyMed:"medium", keyLow:"low", keyUnk:"unknown",
+  blankStart:"Set your filters on the left and run the search.",
+  blankNone:"No accounts matched. Widen the follower range or try a different hashtag.",
+  blankList:"Nothing here yet. Add people from your search results.",
+  blankNoList:"No lists yet. Create one at the bottom left.",
+  errParse:"Could not convert: ", errRun:"Search failed: ", errNoHashtag:"Enter a hashtag first",
+  gqPh:"Search everything saved",
+  newFolderPh:"New folder",
+  uncat:"Uncategorized",
+  moveTo:"Move to folder",
+  delFolder:"Delete folder",
+  savedIn:"Saved",
+  allSaved:"Everything saved",
+  inList:"List",
+  confirmDelF:n=>`Delete the folder "${n}"? Its lists move to Uncategorized and are not deleted.`,
+  blankSearch:"No saved accounts match.",
+  gfoot:n=>`Across all lists: ${n}`,
+  fAccountType:"Account type",
+  atAny:"Any",
+  atBiz:"Business",
+  atCreator:"Creator",
+  atPersonal:"Personal",
+  fPr:"Sponsored posts",
+  prAny:"Any",
+  prYes:"Has sponsored posts",
+  prNo:"No sponsored posts",
+  fContact:"Only accounts with a public email",
+  fVerified:"Verified accounts only",
+  fExclude:"Exclude people already in my lists",
+  directTitle:"Check specific accounts",
+  directNote:"One username per line, up to 15. If filled, these accounts are fetched instead of running a hashtag search.",
+  naTitle:"Not available in this tool",
+  naNote:"Audience-side attributes are not published by Instagram without the creator\u0027s consent, so no method can retrieve them.",
+  naItems:["Follower geography","Follower gender split","Follower age range","Follower interests","Follower active rate"],
+  colGrowth:"Growth",
+  colType:"Type",
+  colReel:"Avg views",
+  colPr:"PR",
+  colEmail:"Contact",
+  fHashtag:"Hashtag",
+  fFollowers:"Followers",
+  fActive:"Posted within (days)",
+  fEr:"Min engagement rate (%)",
+  fReelViews:"Min avg Reel views",
+  fPosts:"Min post count",
+  fProfileKw:"Keyword in bio",
+  fCaptionKw:"Keyword in captions",
+  fMention:"Mentions this account",
+  hAge:"Age only resolves for people who state it in their bio. Setting it cuts the pool a lot",
+  fContent:"Content keywords (comma separated)",
+  fRegion:"Region",
+  hNarration:"Estimated from how often their Reels use original audio",
+  refineLead:"Refine these results:",
+  rqL:"Keyword",
+  rMinFL:"Min followers",
+  rMinErL:"Min ER%",
+  colNarr:"Narration",
+  colStatus:"Status",
+  moveToL:"Move to folder",
+  whoamiL:"Your name",
+  acAny:"No limit",
+  ac3m:"Within 3 months",
+  ac6m:"Within 6 months",
+  hHashtag:"No #, one only. e.g. fitness",
+  hFollowers:"Minimum on the left, maximum on the right",
+  hActive:"Anything older than this is excluded",
+  hEr:"Avg likes \u00f7 followers. 3+ is a decent bar",
+  hReelViews:"Blank = no limit. e.g. 10000",
+  hPosts:"Blank = no limit. e.g. 100",
+  hAccountType:"Business and creator accounts usually list contact details",
+  hProfileKw:"A word in their bio. e.g. agency, model, coach",
+  hCaptionKw:"A word in their post text. e.g. campaign",
+  hMention:"Enter a competitor brand to find who worked with them. e.g. nike",
+  hPr:"Whether they have taken sponsored work before",
+  hContent:"Comma separated. e.g. home workout, weight loss",
+  hRegion:"Only when a place name is in the bio. e.g. Tokyo",
+  hAgeF:"e.g. 20 to 35. Only resolves for people who state age in their bio",
+  hBrief:"Write it however you like. It fills in the filters below",
+  hDirect:"One account per line, up to 15",
+  rqPh2:"Filter by account name or bio",
+  fUsernames:"Usernames",
+  llmStage:(a,b)=>`AI inference ${a}/${b}`,
+  tabDb:"Database",
+  dbLead:"Every account fetched by past searches. Browsing here costs no Apify credit:",
+  dbMaxFL:"Max followers",
+  dbSortL:"Sort",
+  dbSortF:"By followers",
+  dbSortE:"By ER",
+  dbSortL2:"Recently seen",
+  dbSortT:"Times seen",
+  dbTags:"Tags seen in",
+  dbTimes:"Times seen",
+  dbLast:"Last seen",
+  dbEmpty:"Empty so far. Run a search and every fetched account lands here automatically.",
+  dbFree:"Browsing is free (no Apify usage)",
+  dbFoot:(t,s)=>`Indexed <b>${t}</b> accounts · showing <b>${s}</b>`,
+  colQuality:"Quality",
+  q_ok:"Clean",
+  q_warn:"Caution",
+  q_risk:"Check",
+  flag_low_er:"Engagement is abnormally low for the follower count (classic bought-follower sign)",
+  flag_mass_following:"Follows over 4,000 accounts (possible follow-back farming)",
+  flag_weak_ratio:"Low follower-to-following ratio; count may be inflated by mutual follows",
+  flag_few_posts:"Very few posts for this many followers",
+  flag_growth_spike:"A period of unnatural follower spikes (over +5% in a day)",
+  flagClean:"No red flags in the public data",
+  dHistory:"Follower trend (our own observations)",
+  dHistoryNone:"Only one observation so far. Search again on another day and the chart grows.",
+  dQuality:"Quality signals",
+  dInLists:"In lists",
+  dNoLists:"Not saved",
+  dSimilar:"Similar accounts (from the database)",
+  dSimilarNone:"Not enough accounts to compare yet. More searches sharpen this.",
+  dPosts:"Posts",
+  setupBtn:"API setup",
+  setupTitle:"Your API tokens",
+  setupNote:"This tool runs on each person\u0027s own tokens. Search costs are billed to your own Apify account.",
+  setupApify:"Apify API token (required)",
+  setupApifyHelp:"Get it at apify.com \u2192 Settings \u2192 Integrations. The $5 free tier works",
+  setupAnthropic:"Anthropic API key (optional)",
+  setupAnthropicHelp:"Powers the AI brief box and better gender/content inference. Works without it",
+  setupPrivacy:"Tokens are stored only in this browser, never on the server. On a shared PC, clear them when done.",
+  setupSaved:"Saved (this browser only)",
+  errNoToken:"No Apify token set. Open API setup (top right) and paste your own token",
+  parseHintNoAI:"AI conversion needs your Anthropic key \u2014 set it in API setup (top right)",
+  savedTo:n=>`Saved to "${n}"`, selectFirst:"Select some rows first",
+  confirmDel:n=>`Delete the list "${n}"?`, dupName:"A list with that name already exists"
+},
+zh:{
+  whoamiPh:"名字", tabSearch:"搜索", tabLists:"名单",
+  briefTitle:"你想找什么",
+  briefPh:"日本做居家健身的女生，粉丝一万到七万，最好视频里有真人讲解，而且最近还在更新。",
+  parseBtn:"转成筛选条件", parseHint:"把你写的这段话变成下面的条件",
+  hardBadge:"真实数据", hardNote:"API 直接返回，可以放心当筛选条件。",
+  estBadge:"推断", estNote:"API 里没有这些字段，靠 bio、文案和音源推断，必须人工复核。", fFollowers:"粉丝数", fActive:"多少天内有更新", fGender:"性别", fAge:"年龄", fNarration:"只要有真人讲解的",
+  gAny:"性别不限", gF:"女", gM:"男",
+  nAny:"讲解不限", nYes:"有讲解", nNo:"无讲解",
+  useLlm:"启用 AI 推断", runBtn:"开始搜索", csvBtn:"CSV",
+  rqPh:"搜索账号或简介", rMinFPh:"最低粉丝", rMinErPh:"最低互动率%",
+  saveSel:"保存选中", saveTitle:"存进名单",
+  newListPh:"新名单的名字", cancel:"取消", save:"保存",
+  rename:"重命名", deleteList:"删除", stAll:"全部状态",
+  statuses:{new:"待处理",contacted:"已联系",negotiating:"洽谈中",approved:"已确定",rejected:"已否决"},
+  examples:["居家健身、女生、1万到5万、视频有讲解",
+            "推荐蛋白粉的男生、3万到7万、本月有更新",
+            "瑜伽普拉提、20多岁、互动率3%以上"],
+  cols:{username:"账号",followers:"粉丝数",engagement:"互动率%",last_post:"最后更新",
+        narration:"讲解",gender:"性别",age:"年龄",content:"内容方向",bio:"简介",
+        note:"备注",item_status:"状态",added_by:"添加人"},
+  narr:{yes:"有",partial:"部分",no:"无",unknown:"—"},
+  gen:{female:"女",male:"男",unknown:"—"},
+  stages:{queued:"排队中",fetching_posts:"正在抓取帖子",fetching_profiles:"正在抓取主页",filtering:"正在筛选",done:"完成",error:"出错"},
+  found:n=>`找到 ${n} 个账号，正在拉主页`,
+  prof:(a,b)=>`正在拉主页 ${a}/${b}`,
+  foot:(p,a,m,s)=>`帖子 <b>${p}</b> · 账号 <b>${a}</b> · 符合 <b>${m}</b> · 显示 <b>${s}</b>`,
+  lfoot:(n,s)=>`共 ${n} 人 · 显示 <b>${s}</b>`,
+  keyline:"可信度", keyHigh:"高", keyMed:"中", keyLow:"低", keyUnk:"未知",
+  blankStart:"在左边设好条件，然后点开始搜索。",
+  blankNone:"没有符合条件的账号。可以放宽粉丝区间，或者换一个话题标签。",
+  blankList:"这个名单还是空的。去搜索结果里加人。",
+  blankNoList:"还没有名单。在左下角新建一个。",
+  errParse:"转换失败：", errRun:"搜索失败：", errNoHashtag:"请先填写话题标签",
+  gqPh:"在所有名单里搜",
+  newFolderPh:"新文件夹",
+  uncat:"未分类",
+  moveTo:"移到文件夹",
+  delFolder:"删除文件夹",
+  savedIn:"已保存",
+  allSaved:"所有已保存",
+  inList:"所在名单",
+  confirmDelF:n=>`确定删除文件夹「${n}」吗？里面的名单会回到未分类，不会被删除。`,
+  blankSearch:"没有匹配的已保存账号。",
+  gfoot:n=>`跨名单搜索：${n} 条`,
+  fAccountType:"账号类型",
+  atAny:"全部",
+  atBiz:"企业号",
+  atCreator:"创作者号",
+  atPersonal:"个人号",
+  fPr:"广告/合作帖",
+  prAny:"不限",
+  prYes:"有广告帖",
+  prNo:"没有广告帖",
+  fContact:"只要公开了邮箱的",
+  fVerified:"只要认证账号",
+  fExclude:"排除已存进名单的人",
+  directTitle:"直接查指定账号",
+  directNote:"每行一个用户名，最多15个。填了就只查这些人，不跑话题标签搜索。",
+  naTitle:"这个工具拿不到的条件",
+  naNote:"粉丝侧的属性 Instagram 不经本人授权就不公开，任何方法都拿不到。",
+  naItems:["粉丝地区分布","粉丝男女比例","粉丝年龄层","粉丝兴趣标签","粉丝活跃率"],
+  colGrowth:"增长率",
+  colType:"类型",
+  colReel:"平均播放",
+  colPr:"广告",
+  colEmail:"联系方式",
+  fHashtag:"话题标签",
+  fFollowers:"粉丝数（人）",
+  fActive:"最近发帖（天以内）",
+  fEr:"最低互动率（%）",
+  fReelViews:"Reel 平均播放（次以上）",
+  fPosts:"发帖数（条以上）",
+  fProfileKw:"简介里包含的词",
+  fCaptionKw:"文案里包含的词",
+  fMention:"@ 过这个账号",
+  hAge:"只有对方在 bio 里写了年龄才判断得出。填了会大幅减少候选人",
+  fContent:"内容关键词（逗号分隔）",
+  fRegion:"地区",
+  hNarration:"根据 Reel 使用原创音源的比例推断",
+  refineLead:"在这批结果里再筛：",
+  rqL:"关键词",
+  rMinFL:"最低粉丝",
+  rMinErL:"最低互动率%",
+  colNarr:"讲解",
+  colStatus:"状态",
+  moveToL:"移到文件夹",
+  whoamiL:"你的名字",
+  acAny:"不限",
+  ac3m:"3个月内",
+  ac6m:"6个月内",
+  hHashtag:"不用写 #，只填一个。例：筋トレ",
+  hFollowers:"左边最少，右边最多",
+  hActive:"比这更久没更新的会被排除",
+  hEr:"平均点赞÷粉丝数。3 以上算不错",
+  hReelViews:"留空=不限。例：10000",
+  hPosts:"留空=不限。例：100",
+  hAccountType:"企业号和创作者号通常会留联系方式",
+  hProfileKw:"对方 bio 里写的词。例：事务所、模特、教练",
+  hCaptionKw:"帖子正文里出现的词。例：キャンペーン",
+  hMention:"填竞品品牌，能找出和它合作过的人。例：nike",
+  hPr:"以前有没有接过广告合作",
+  hContent:"逗号分隔。例：宅トレ, 減量",
+  hRegion:"只有简介里写了地名才有。例：東京",
+  hAgeF:"例：20 到 35。只有对方写了年龄才判断得出",
+  hBrief:"想怎么写就怎么写，会自动填到下面的条件里",
+  hDirect:"一行一个账号，最多15个",
+  rqPh2:"按账号名或简介筛选",
+  fUsernames:"用户名",
+  llmStage:(a,b)=>`AI 推断中 ${a}/${b}`,
+  tabDb:"数据库",
+  dbLead:"历次搜索抓到的全部账号。在这里浏览和搜索不消耗 Apify 额度：",
+  dbMaxFL:"最高粉丝",
+  dbSortL:"排序",
+  dbSortF:"按粉丝数",
+  dbSortE:"按互动率",
+  dbSortL2:"最近确认",
+  dbSortT:"出现次数",
+  dbTags:"出现过的标签",
+  dbTimes:"出现次数",
+  dbLast:"最后确认",
+  dbEmpty:"还是空的。跑一次搜索，抓到的所有账号会自动存进来。",
+  dbFree:"浏览免费（不消耗 Apify）",
+  dbFoot:(t,s)=>`已积累 <b>${t}</b> 个账号 · 显示 <b>${s}</b>`,
+  colQuality:"质量",
+  q_ok:"正常",
+  q_warn:"注意",
+  q_risk:"需核查",
+  flag_low_er:"互动率相对粉丝数异常低（买粉的典型信号）",
+  flag_mass_following:"关注数超过4000（可能靠互关涨粉）",
+  flag_weak_ratio:"粉丝÷关注比偏低，粉丝数可能靠互关撑起来的",
+  flag_few_posts:"发帖极少但粉丝很多",
+  flag_growth_spike:"存在不自然的粉丝暴涨时段（单日超+5%）",
+  flagClean:"公开数据里没有发现危险信号",
+  dHistory:"粉丝趋势（我们自己的观测数据）",
+  dHistoryNone:"目前只有一次观测。隔天再搜一次，趋势图就会长出来。",
+  dQuality:"质量信号",
+  dInLists:"所在名单",
+  dNoLists:"未保存",
+  dSimilar:"类似账号（来自数据库）",
+  dSimilarNone:"库里可比的账号还不够。搜索越多，推荐越准。",
+  dPosts:"发帖数",
+  setupBtn:"API设置",
+  setupTitle:"你自己的 API 令牌",
+  setupNote:"这个工具用每个人自己的令牌运行。搜索费用记在你自己的 Apify 账户上。",
+  setupApify:"Apify API 令牌（必填）",
+  setupApifyHelp:"在 apify.com → Settings → Integrations 获取。$5 免费额度就能用",
+  setupAnthropic:"Anthropic API 密钥（选填）",
+  setupAnthropicHelp:"用于 AI 输入框和提升性别/内容推断准确度。不填也能用",
+  setupPrivacy:"令牌只存在这台浏览器里，绝不会存到服务器。公用电脑用完记得清掉。",
+  setupSaved:"已保存（仅此浏览器）",
+  errNoToken:"还没设置 Apify 令牌。点右上角「API设置」填入你自己的令牌",
+  parseHintNoAI:"AI 转换需要你自己的 Anthropic 密钥——在右上角「API设置」里填",
+  savedTo:n=>`已存进「${n}」`, selectFirst:"请先勾选要保存的行",
+  confirmDel:n=>`确定删除名单「${n}」吗？`, dupName:"已经有同名的名单了"
+}};
+
+let LANG = localStorage.getItem("radar_lang") || "ja";
+let VIEW = "search";
+let RESULTS = [], STATS = null, JOB = null, timer = null;
+let SORT = {k:"followers", d:-1}, LSORT = {k:"added_at", d:-1};
+let LISTS = [], CUR = null, ITEMS = [], pending = [];
+
+const $ = id => document.getElementById(id);
+const t = () => I18N[LANG];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const me = () => $("whoami").value.trim();
+
+function toast(m){
+  const el = $("toast"); el.textContent = m; el.classList.add("on");
+  clearTimeout(el._t); el._t = setTimeout(()=>el.classList.remove("on"), 2100);
+}
+
+const tokens = {
+  apify: () => localStorage.getItem("radar_tok_apify") || "",
+  anthropic: () => localStorage.getItem("radar_tok_anthropic") || "",
+};
+const hasAI = () => !!tokens.anthropic();
+
+async function api(url, opts={}){
+  const r = await fetch(url, {headers:{
+    "Content-Type":"application/json",
+    "X-Radar-User":me(),
+    "X-Apify-Token":tokens.apify(),
+    "X-Anthropic-Key":tokens.anthropic(),
+  }, ...opts});
+  const d = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(d.error || r.status);
+  return d;
+}
+
+/* ---------- トークン設定 ---------- */
+$("setupBtn").onclick = ()=>{
+  $("tokApify").value = tokens.apify();
+  $("tokAnthropic").value = tokens.anthropic();
+  $("setup").showModal();
+};
+$("setupCancel").onclick = ()=> $("setup").close();
+$("setupSave").onclick = ()=>{
+  localStorage.setItem("radar_tok_apify", $("tokApify").value.trim());
+  localStorage.setItem("radar_tok_anthropic", $("tokAnthropic").value.trim());
+  $("setup").close();
+  applyLang();          // AI 入力欄の有効/無効を反映
+  toast(t().setupSaved);
+};
+
+/* ---------- language ---------- */
+function applyLang(){
+  document.documentElement.lang = LANG;
+  const d = t();
+  document.querySelectorAll("[data-i18n]").forEach(el=>{
+    const v = d[el.dataset.i18n]; if (typeof v === "string") el.textContent = v;
+  });
+  document.querySelectorAll("[data-i18n-ph]").forEach(el=>{
+    el.placeholder = d[el.dataset.i18nPh] || "";
+  });
+  $("parseHint").textContent = hasAI() ? d.parseHint : d.parseHintNoAI;
+  $("parseBtn").disabled = !hasAI();
+
+  $("chips").innerHTML = "";
+  d.examples.forEach(ex=>{
+    const b = document.createElement("button");
+    b.textContent = ex; b.onclick = ()=>{ $("brief").value = ex; };
+    $("chips").appendChild(b);
+  });
+
+  $("naList").innerHTML = d.naItems.map(x=>`<li>${esc(x)}</li>`).join("");
+
+  const keep = $("lStatus").value;
+  $("lStatus").innerHTML = `<option value="">${esc(d.stAll)}</option>` +
+    Object.entries(d.statuses).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join("");
+  $("lStatus").value = keep;
+
+  document.querySelectorAll(".langs button").forEach(b=>
+    b.setAttribute("aria-pressed", String(b.dataset.lang === LANG)));
+
+  renderResults(); renderNav(); renderItems();
+}
+document.querySelectorAll(".langs button").forEach(b=>{
+  b.onclick = ()=>{ LANG = b.dataset.lang; localStorage.setItem("radar_lang",LANG); applyLang(); };
+});
+
+/* ---------- views ---------- */
+document.querySelectorAll(".navtabs button").forEach(b=>{
+  b.onclick = ()=>{
+    VIEW = b.dataset.view;
+    document.querySelectorAll(".navtabs button").forEach(x=>
+      x.setAttribute("aria-selected", String(x.dataset.view === VIEW)));
+    $("view-search").hidden = VIEW !== "search";
+    $("view-lists").hidden  = VIEW !== "lists";
+    $("view-db").hidden     = VIEW !== "db";
+    if (VIEW === "lists") loadLists();
+    if (VIEW === "db") loadDb();
+  };
+});
+$("whoami").value = localStorage.getItem("radar_user") || "";
+$("whoami").oninput = ()=> localStorage.setItem("radar_user", $("whoami").value);
+
+/* ---------- brief -> filters ---------- */
+$("parseBtn").onclick = async ()=>{
+  const brief = $("brief").value.trim(); if (!brief) return;
+  $("parseMsg").textContent = ""; $("parseBtn").disabled = true;
+  const prev = $("parseHint").textContent; $("parseHint").textContent = "…";
+  try{
+    const {filters:f} = await api("/api/parse",{method:"POST",body:JSON.stringify({brief,lang:LANG})});
+    $("hashtag").value = f.hashtag || "";
+    $("minF").value = f.min_followers; $("maxF").value = f.max_followers;
+    // AI は「30日以内」など任意の日数を返しうるが、選択肢は3ヶ月/6ヶ月しかない。
+    // 一番近い選択肢に寄せる（そのまま代入すると選択が空になる）。
+    const days = +f.active_days || 0;
+    $("activeDays").value = !days || days > 270 ? "" : (days <= 135 ? "90" : "180");
+    $("minEr").value = f.min_engagement || 0;
+    $("gender").value = f.gender || "any";
+    $("ageMin").value = f.age_min ?? ""; $("ageMax").value = f.age_max ?? "";
+    $("narration").checked = !!f.narration_only;
+    $("contentKw").value = (f.content_keywords || []).join(", ");
+    $("profileKw").value = f.profile_keyword || "";
+    $("captionKw").value = f.caption_keyword || "";
+    $("mention").value = f.mention || "";
+    $("accountType").value = f.account_type || "any";
+    $("hasPr").value = f.has_pr || "any";
+    $("hasContact").checked = !!f.has_contact;
+    $("verifiedOnly").checked = !!f.verified_only;
+    $("minReel").value = f.min_reel_views ?? "";
+    $("minPosts").value = f.min_posts ?? "";
+    $("region").value = f.region || "";
+    $("parseHint").textContent = f.notes || prev;
+  }catch(e){
+    $("parseMsg").textContent = t().errParse + e.message;
+    $("parseHint").textContent = prev;
+  }finally{ $("parseBtn").disabled = false; }
+};
+
+/* ---------- search ---------- */
+$("runBtn").onclick = async ()=>{
+  const hashtag = $("hashtag").value.trim().replace(/^#/,"");
+  const usernames = $("usernames").value.split(/[\n,]/).map(s=>s.trim().replace(/^@/,"")).filter(Boolean);
+  $("runMsg").textContent = "";
+  if (!tokens.apify()){ $("runMsg").textContent = t().errNoToken; $("setupBtn").focus(); return; }
+  if (!hashtag && !usernames.length){ $("runMsg").textContent = t().errNoHashtag; return; }
+  const p = {
+    hashtag, usernames,
+    min_followers:+$("minF").value || 0,
+    max_followers:+$("maxF").value || 100000000,
+    active_days:$("activeDays").value ? +$("activeDays").value : 36500,
+    min_engagement:+$("minEr").value || 0,
+    min_reel_views:+$("minReel").value || null,
+    min_posts:+$("minPosts").value || null,
+    account_type:$("accountType").value,
+    profile_keyword:$("profileKw").value.trim(),
+    caption_keyword:$("captionKw").value.trim(),
+    mention:$("mention").value.trim().replace(/^@/,""),
+    has_pr:$("hasPr").value,
+    has_contact:$("hasContact").checked,
+    verified_only:$("verifiedOnly").checked,
+    exclude_saved:$("excludeSaved").checked,
+    region:$("region").value.trim(),
+    gender:$("gender").value,
+    age_min:$("ageMin").value ? +$("ageMin").value : null,
+    age_max:$("ageMax").value ? +$("ageMax").value : null,
+    narration_only:$("narration").checked,
+    content_keywords:$("contentKw").value.split(",").map(s=>s.trim()).filter(Boolean),
+    posts_limit:200, use_llm:$("useLlm").checked, user:me()
+  };
+  $("runBtn").disabled = true;
+  $("state").innerHTML = `<span class="live">${esc(t().stages.queued)}</span>`;
+  try{
+    const {job_id} = await api("/api/search",{method:"POST",body:JSON.stringify(p)});
+    JOB = job_id; poll(job_id);
+  }catch(e){
+    $("runMsg").textContent = t().errRun + e.message;
+    $("runBtn").disabled = false; $("state").textContent = "";
+  }
+};
+
+function stageText(s){
+  const d = t(); if (!s) return "";
+  if (s.startsWith("accounts_found:")) return d.found(s.split(":")[1]);
+  if (s.startsWith("profiles:")){ const [a,b] = s.split(":")[1].split("/"); return d.prof(a,b); }
+  if (s.startsWith("llm:")){ const [a,b] = s.split(":")[1].split("/"); return d.llmStage(a,b); }
+  return d.stages[s] || s;
+}
+
+function poll(id){
+  clearInterval(timer);
+  timer = setInterval(async ()=>{
+    try{
+      const j = await api(`/api/status/${id}`);
+      $("state").innerHTML = `<span class="live">${esc(stageText(j.stage))}</span>`;
+      if (j.status === "done"){
+        clearInterval(timer);
+        RESULTS = j.results || []; STATS = j.stats;
+        $("state").textContent = t().stages.done;
+        $("runBtn").disabled = false;
+        renderResults(); refreshSaved();
+      }
+      if (j.status === "error"){
+        clearInterval(timer);
+        $("runMsg").textContent = t().errRun + (j.error || "");
+        $("state").textContent = ""; $("runBtn").disabled = false;
+      }
+    }catch(e){}
+  }, 2000);
+}
+
+/* ---------- results ---------- */
+const COLS = ["username","followers","growth","engagement","avg_reel_views","last_post",
+              "account_type","quality","pr_count","email","narration","gender","age","content","bio"];
+const NUM = new Set(["followers","engagement","growth","avg_reel_views","pr_count","posts_count"]);
+
+function sortRows(rows, s){
+  return rows.sort((a,b)=>{
+    let x = a[s.k], y = b[s.k];
+    if (NUM.has(s.k)) return ((+x||0)-(+y||0))*s.d;
+    return String(x??"").localeCompare(String(y??""))*s.d;
+  });
+}
+
+function visible(){
+  const q = $("rq").value.trim().toLowerCase();
+  const mf = +$("rMinF").value||0, mer = +$("rMinEr").value||0;
+  const g = $("rGender").value, n = $("rNarr").value;
+  return sortRows(RESULTS.filter(r=>{
+    if (r.followers < mf || r.engagement < mer) return false;
+    if (g && r.gender !== g) return false;
+    if (n === "yes" && !["yes","partial"].includes(r.narration)) return false;
+    if (n === "no" && r.narration !== "no") return false;
+    if (q && !`${r.username} ${r.full_name} ${r.bio} ${r.content}`.toLowerCase().includes(q)) return false;
+    return true;
+  }), SORT);
+}
+
+function headHTML(cols, sort, attr, d){
+  const label = c => ({growth:d.colGrowth, account_type:d.colType,
+                       avg_reel_views:d.colReel, pr_count:d.colPr,
+                       email:d.colEmail, list_name:d.inList}[c]) || d.cols[c] || c;
+  return `<th class="fixed"><input type="checkbox" class="tick row" id="all"></th>` +
+    cols.map(c=>`<th ${attr}="${c}">${esc(label(c))}${sort.k===c?`<span class="ar">${sort.d<0?"↓":"↑"}</span>`:""}</th>`).join("") +
+    `<th class="fixed"></th>`;
+}
+
+function keyLegend(d){
+  return `<span class="key">${esc(d.keyline)}</span>
+    <span class="key"><i class="cf high"></i>${esc(d.keyHigh)}</span>
+    <span class="key"><i class="cf medium"></i>${esc(d.keyMed)}</span>
+    <span class="key"><i class="cf low"></i>${esc(d.keyLow)}</span>
+    <span class="key"><i class="cf unknown"></i>${esc(d.keyUnk)}</span>`;
+}
+
+function renderResults(){
+  const d = t();
+  if (!STATS && !RESULTS.length){
+    $("rhead").innerHTML = "";
+    $("rbody").innerHTML = `<tr><td class="blank">${esc(d.blankStart)}</td></tr>`;
+    $("rfoot").innerHTML = "";
+    return;
+  }
+  const rows = visible();
+  $("rhead").innerHTML = headHTML(COLS, SORT, "data-s", d);
+  $("rhead").querySelectorAll("th[data-s]").forEach(th=>{
+    th.onclick = ()=>{
+      const k = th.dataset.s;
+      SORT = SORT.k===k ? {k, d:-SORT.d} : {k, d:NUM.has(k)?-1:1};
+      renderResults();
+    };
+  });
+  $("all").onchange = e =>
+    document.querySelectorAll("#rbody .tick").forEach(c=> c.checked = e.target.checked);
+
+  $("rbody").innerHTML = rows.length ? rows.map(r=>`
+    <tr data-u="${esc(r.username)}">
+      <td><input type="checkbox" class="tick row"></td>
+      <td class="acct"><a href="${esc(r.url)}" target="_blank" rel="noopener">@${esc(r.username)}</a>${r.verified?'<span class="vf">✓</span>':""}</td>
+      <td class="num">${(+r.followers).toLocaleString()}</td>
+      <td class="num ${r.growth > 0 ? "up" : r.growth < 0 ? "down" : ""}">${r.growth == null ? "—" : (r.growth > 0 ? "+" : "") + r.growth + "%"}</td>
+      <td class="num">${esc(r.engagement)}</td>
+      <td class="num">${r.avg_reel_views ? (+r.avg_reel_views).toLocaleString() : "—"}</td>
+      <td>${esc(r.last_post)}</td>
+      <td>${esc(d[{business:"atBiz",creator:"atCreator",personal:"atPersonal"}[r.account_type]] || "—")}</td>
+      <td>${r.quality ? `<i class="q ${esc(r.quality)}" data-open="${esc(r.username)}" title="${esc(d["q_"+r.quality]||"")}"></i>` : "—"}</td>
+      <td class="num">${r.pr_count || "—"}</td>
+      <td>${r.email ? `<a href="mailto:${esc(r.email)}">✉</a>` : "—"}</td>
+      <td>${esc(d.narr[r.narration] ?? r.narration)}<i class="cf ${esc(r.narration_conf)}"></i></td>
+      <td>${esc(d.gen[r.gender] ?? r.gender)}<i class="cf ${esc(r.gender_conf)}"></i></td>
+      <td>${esc(r.age === "unknown" ? "—" : r.age)}<i class="cf ${esc(r.age_conf)}"></i></td>
+      <td>${esc(r.content === "unknown" ? "—" : r.content)}<i class="cf ${esc(r.content_conf)}"></i></td>
+      <td class="bio" title="${esc(r.bio)}">${esc(r.bio)}</td>
+      <td>${SAVED[r.username]
+            ? `<button class="plus done" data-add="${esc(r.username)}" title="${esc(SAVED[r.username].join(", "))}">✓</button>`
+            : `<button class="plus" data-add="${esc(r.username)}">+</button>`}</td>
+    </tr>`).join("")
+    : `<tr><td colspan="${COLS.length+2}" class="blank">${esc(d.blankNone)}</td></tr>`;
+
+  $("rbody").querySelectorAll("[data-add]").forEach(b=>{
+    b.onclick = ()=> openSave([RESULTS.find(r=>r.username === b.dataset.add)]);
+  });
+  $("rbody").querySelectorAll("[data-open]").forEach(el=>{
+    el.onclick = e=>{ e.preventDefault(); openAccount(el.dataset.open); };
+  });
+
+  $("rfoot").innerHTML = (STATS ? d.foot(STATS.posts, STATS.accounts, STATS.matched, rows.length) : "") +
+    `<span class="push"></span>` + keyLegend(d);
+}
+
+["rq","rMinF","rMinEr","rGender","rNarr"].forEach(id=>
+  $(id).addEventListener("input", ()=> STATS && renderResults()));
+
+$("csvBtn").onclick = ()=> JOB && (window.location = `/api/export/job/${JOB}`);
+$("saveSelBtn").onclick = ()=>{
+  const picked = [...document.querySelectorAll("#rbody tr")]
+    .filter(tr=> tr.querySelector(".tick")?.checked)
+    .map(tr=> RESULTS.find(r=>r.username === tr.dataset.u)).filter(Boolean);
+  picked.length ? openSave(picked) : toast(t().selectFirst);
+};
+
+async function refreshSaved(){
+  if (!RESULTS.length) return;
+  try{
+    const {map} = await api("/api/saved/map",{method:"POST",
+      body: JSON.stringify({usernames: RESULTS.map(r=>r.username)})});
+    SAVED = map; renderResults();
+  }catch(e){}
+}
+
+/* ---------- save dialog ---------- */
+async function openSave(items){
+  pending = items;
+  await loadLists();
+  $("dlgList").innerHTML = LISTS.map(l=>`<option value="${l.id}">${esc(l.name)} (${l.count})</option>`).join("");
+  $("dlgNew").value = "";
+  $("dlg").showModal();
+}
+$("dlgCancel").onclick = ()=> $("dlg").close();
+$("dlgSave").onclick = async ()=>{
+  const nn = $("dlgNew").value.trim();
+  try{
+    let id, name;
+    if (nn){ const c = await api("/api/lists",{method:"POST",body:JSON.stringify({name:nn,user:me()})}); id=c.id; name=c.name; }
+    else { id = +$("dlgList").value; name = LISTS.find(l=>l.id===id)?.name || ""; }
+    if (!id) return;
+    await api(`/api/lists/${id}/items`,{method:"POST",body:JSON.stringify({items:pending,user:me()})});
+    $("dlg").close(); toast(t().savedTo(name)); await loadLists(); refreshSaved();
+  }catch(e){ toast(e.message === "duplicate_name" ? t().dupName : e.message); }
+};
+
+/* ---------- lists + folders ---------- */
+let TREE = {folders:[], loose:[], total_lists:0, total_items:0};
+let GLOBAL = null;   // 横断検索の結果。null なら通常のリスト表示
+let SAVED = {};      // {username: [リスト名]}
+
+async function loadLists(){
+  try{
+    TREE = await api("/api/tree");
+    LISTS = [...TREE.folders.flatMap(f=>f.lists), ...TREE.loose];
+    $("listCnt").textContent = TREE.total_lists || "";
+    renderNav(); renderMoveTo();
+    if (VIEW === "lists" && !GLOBAL){
+      if (CUR && !LISTS.find(l=>l.id===CUR)) CUR = null;
+      if (!CUR && LISTS.length) CUR = LISTS[0].id;
+      if (CUR) await loadItems(CUR); else { ITEMS=[]; $("lTitle").textContent=""; renderItems(); }
+    }
+  }catch(e){}
+  return LISTS;
+}
+
+function listBtn(l){
+  return `<button class="li" data-l="${l.id}" aria-current="${l.id===CUR && !GLOBAL}">
+    <span class="ln">${esc(l.name)}</span><span class="n">${l.count}</span></button>`;
+}
+
+function renderNav(){
+  const d = t();
+  const open = new Set([...document.querySelectorAll(".fold[open]")].map(x=>x.dataset.f));
+  let html = "";
+
+  for (const f of TREE.folders){
+    const isOpen = open.size ? open.has(String(f.id)) : true;
+    html += `<details class="fold" data-f="${f.id}" ${isOpen?"open":""}>
+      <summary>
+        <span class="fn">${esc(f.name)}</span>
+        <span class="tot">${f.total}</span>
+        <button class="fx" data-rf="${f.id}" title="${esc(d.delFolder)}">×</button>
+      </summary>
+      ${f.lists.map(listBtn).join("") || `<div class="blank" style="padding:10px;font-size:10.5px">—</div>`}
+    </details>`;
+  }
+  if (TREE.loose.length){
+    html += `<details class="fold loose" data-f="none" open>
+      <summary><span class="fn">${esc(d.uncat)}</span><span class="tot">${TREE.loose.reduce((a,b)=>a+b.count,0)}</span></summary>
+      ${TREE.loose.map(listBtn).join("")}
+    </details>`;
+  }
+  if (!TREE.total_lists) html = `<div class="blank" style="padding:20px 12px;font-size:11px">${esc(d.blankNoList)}</div>`;
+
+  $("lnav").innerHTML = html;
+  $("lnav").querySelectorAll("[data-l]").forEach(b=>{
+    b.onclick = ()=>{ GLOBAL = null; $("gq").value = ""; CUR = +b.dataset.l; loadItems(CUR); renderNav(); };
+  });
+  $("lnav").querySelectorAll("[data-rf]").forEach(b=>{
+    b.onclick = async e=>{
+      e.preventDefault(); e.stopPropagation();
+      const f = TREE.folders.find(x=>x.id === +b.dataset.rf);
+      if (!confirm(t().confirmDelF(f?.name || ""))) return;
+      await api(`/api/folders/${b.dataset.rf}`,{method:"DELETE"});
+      await loadLists();
+    };
+  });
+}
+
+function renderMoveTo(){
+  const d = t();
+  $("moveTo").innerHTML = `<option value="">${esc(d.moveTo)}</option>` +
+    `<option value="none">${esc(d.uncat)}</option>` +
+    TREE.folders.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join("");
+}
+$("moveTo").onchange = async ()=>{
+  const v = $("moveTo").value;
+  if (!CUR || !v) return;
+  await api(`/api/lists/${CUR}/move`,{method:"POST",
+    body: JSON.stringify({folder_id: v === "none" ? null : +v})});
+  $("moveTo").value = "";
+  await loadLists();
+};
+
+const addList = async ()=>{
+  const name = $("newName").value.trim(); if (!name) return;
+  try{
+    const c = await api("/api/lists",{method:"POST",body:JSON.stringify({name,user:me()})});
+    $("newName").value = ""; GLOBAL = null; CUR = c.id; await loadLists();
+  }catch(e){ toast(e.message === "duplicate_name" ? t().dupName : e.message); }
+};
+$("newBtn").onclick = addList;
+$("newName").onkeydown = e=>{ if (e.key === "Enter") addList(); };
+
+const addFolder = async ()=>{
+  const name = $("newFolder").value.trim(); if (!name) return;
+  try{
+    await api("/api/folders",{method:"POST",body:JSON.stringify({name,user:me()})});
+    $("newFolder").value = ""; await loadLists();
+  }catch(e){ toast(e.message === "duplicate_name" ? t().dupName : e.message); }
+};
+$("newFolderBtn").onclick = addFolder;
+$("newFolder").onkeydown = e=>{ if (e.key === "Enter") addFolder(); };
+
+/* 横断検索: 全リストから人を探す */
+let gqTimer;
+$("gq").oninput = ()=>{
+  clearTimeout(gqTimer);
+  gqTimer = setTimeout(async ()=>{
+    const q = $("gq").value.trim();
+    if (!q){ GLOBAL = null; renderNav(); if (CUR) loadItems(CUR); else renderItems(); return; }
+    const {items} = await api(`/api/saved?q=${encodeURIComponent(q)}`);
+    GLOBAL = items; ITEMS = items;
+    $("lTitle").textContent = t().allSaved;
+    renderNav(); renderItems();
+  }, 300);
+};
+
+async function loadItems(id){
+  const {list, items} = await api(`/api/lists/${id}`);
+  CUR = list.id; ITEMS = items; GLOBAL = null;
+  $("lTitle").textContent = list.name; renderItems();
+}
+
+const LCOLS = ["username","followers","engagement","last_post","gender","content","item_status","note","added_by"];
+const GCOLS = ["username","followers","engagement","list_name","item_status","note","added_by"];
+
+function visibleItems(){
+  const q = $("lq").value.trim().toLowerCase(), st = $("lStatus").value;
+  return sortRows(ITEMS.filter(i=>{
+    if (st && i.item_status !== st) return false;
+    if (q && !`${i.username} ${i.full_name} ${i.bio} ${i.note}`.toLowerCase().includes(q)) return false;
+    return true;
+  }), LSORT);
+}
+
+function renderItems(){
+  const d = t();
+  const cols = GLOBAL ? GCOLS : LCOLS;
+  const onList = !GLOBAL && CUR;
+
+  ["lCsv","lRename","lDel"].forEach(id=> $(id).disabled = !onList);
+  $("moveTo").disabled = !onList;
+
+  if (!CUR && !GLOBAL){ $("lhead").innerHTML=""; $("lbody").innerHTML=""; $("lfoot").innerHTML=""; return; }
+  const rows = visibleItems();
+
+  $("lhead").innerHTML = cols.map(c=>
+    `<th data-ls="${c}">${esc(c === "list_name" ? d.inList : (d.cols[c]||c))}${LSORT.k===c?`<span class="ar">${LSORT.d<0?"↓":"↑"}</span>`:""}</th>`
+  ).join("") + `<th class="fixed"></th>`;
+  $("lhead").querySelectorAll("th[data-ls]").forEach(th=>{
+    th.onclick = ()=>{
+      const k = th.dataset.ls;
+      LSORT = LSORT.k===k ? {k, d:-LSORT.d} : {k, d:NUM.has(k)?-1:1};
+      renderItems();
+    };
+  });
+
+  const cell = (i,c)=>{
+    if (c === "username") return `<td class="acct"><a href="${esc(i.url)}" target="_blank" rel="noopener">@${esc(i.username)}</a></td>`;
+    if (c === "followers") return `<td class="num">${(+i.followers).toLocaleString()}</td>`;
+    if (c === "engagement") return `<td class="num">${esc(i.engagement)}</td>`;
+    if (c === "last_post") return `<td>${esc(i.last_post)}</td>`;
+    if (c === "gender") return `<td>${esc(d.gen[i.gender] ?? i.gender)}<i class="cf ${esc(i.gender_conf)}"></i></td>`;
+    if (c === "content") return `<td>${esc(i.content === "unknown" ? "—" : i.content)}</td>`;
+    if (c === "list_name") return `<td class="crumb">${i.folder_name ? esc(i.folder_name)+" / " : ""}${esc(i.list_name)}</td>`;
+    if (c === "item_status") return `<td><select class="sel" data-st="${i.item_id}">${Object.entries(d.statuses).map(([k,v])=>
+        `<option value="${k}" ${i.item_status===k?"selected":""}>${esc(v)}</option>`).join("")}</select></td>`;
+    if (c === "note") return `<td><input class="note" data-nt="${i.item_id}" value="${esc(i.note)}"></td>`;
+    if (c === "added_by") return `<td>${esc(i.added_by)}</td>`;
+    return `<td></td>`;
+  };
+
+  $("lbody").innerHTML = rows.length
+    ? rows.map(i=>`<tr>${cols.map(c=>cell(i,c)).join("")}<td><button class="x" data-rm="${i.item_id}">×</button></td></tr>`).join("")
+    : `<tr><td colspan="${cols.length+1}" class="blank">${esc(GLOBAL ? d.blankSearch : d.blankList)}</td></tr>`;
+
+  $("lbody").querySelectorAll("[data-st]").forEach(s=>{
+    s.onchange = async ()=>{
+      await api(`/api/items/${s.dataset.st}`,{method:"PATCH",body:JSON.stringify({status:s.value})});
+      const it = ITEMS.find(x=>String(x.item_id)===s.dataset.st); if (it) it.item_status = s.value;
+    };
+  });
+  $("lbody").querySelectorAll("[data-nt]").forEach(inp=>{
+    let tm;
+    inp.oninput = ()=>{
+      clearTimeout(tm);
+      tm = setTimeout(async ()=>{
+        await api(`/api/items/${inp.dataset.nt}`,{method:"PATCH",body:JSON.stringify({note:inp.value})});
+        const it = ITEMS.find(x=>String(x.item_id)===inp.dataset.nt); if (it) it.note = inp.value;
+      }, 600);
+    };
+  });
+  $("lbody").querySelectorAll("[data-rm]").forEach(b=>{
+    b.onclick = async ()=>{
+      await api(`/api/items/${b.dataset.rm}`,{method:"DELETE"});
+      ITEMS = ITEMS.filter(x=>String(x.item_id)!==b.dataset.rm);
+      renderItems(); loadLists();
+    };
+  });
+
+  $("lfoot").innerHTML = (GLOBAL ? d.gfoot(rows.length) : d.lfoot(ITEMS.length, rows.length)) +
+    `<span class="push"></span>` + keyLegend(d);
+}
+
+["lq","lStatus"].forEach(id=> $(id).addEventListener("input", ()=> CUR && renderItems()));
+$("lCsv").onclick = ()=> CUR && (window.location = `/api/export/list/${CUR}`);
+$("lRename").onclick = async ()=>{
+  if (!CUR) return;
+  const cur = LISTS.find(l=>l.id===CUR);
+  const name = prompt(t().rename, cur?.name || ""); if (!name) return;
+  try{
+    await api(`/api/lists/${CUR}`,{method:"PATCH",body:JSON.stringify({name})});
+    await loadLists(); $("lTitle").textContent = name;
+  }catch(e){ toast(e.message === "duplicate_name" ? t().dupName : e.message); }
+};
+$("lDel").onclick = async ()=>{
+  if (!CUR) return;
+  const cur = LISTS.find(l=>l.id===CUR);
+  if (!confirm(t().confirmDel(cur?.name || ""))) return;
+  await api(`/api/lists/${CUR}`,{method:"DELETE"});
+  CUR = null; ITEMS = []; $("lTitle").textContent = "";
+  await loadLists(); renderItems();
+};
+
+/* ---------- 蓄積データベース ---------- */
+let DB_ROWS = [];
+async function loadDb(){
+  const q = $("dbq").value.trim();
+  const p = new URLSearchParams();
+  if (q) p.set("q", q);
+  if ($("dbMinF").value) p.set("min_f", $("dbMinF").value);
+  if ($("dbMaxF").value) p.set("max_f", $("dbMaxF").value);
+  p.set("sort", $("dbSort").value);
+  try{
+    const r = await api(`/api/accounts?${p}`);
+    DB_ROWS = r.accounts;
+    $("dbCnt").textContent = r.total || "";
+    renderDb(r.total);
+  }catch(e){}
+}
+let dbTimer;
+["dbq","dbMinF","dbMaxF","dbSort"].forEach(id=>
+  $(id).addEventListener("input", ()=>{ clearTimeout(dbTimer); dbTimer=setTimeout(loadDb, 300); }));
+
+const DBCOLS = ["username","followers","engagement","quality","index_hashtags","times_seen","last_seen"];
+function renderDb(total){
+  const d = t();
+  $("dbNote").textContent = d.dbFree;
+  $("dbhead").innerHTML = DBCOLS.map(c=>{
+    const lbl = {quality:d.colQuality, index_hashtags:d.dbTags,
+                 times_seen:d.dbTimes, last_seen:d.dbLast}[c] || d.cols[c] || c;
+    return `<th class="fixed">${esc(lbl)}</th>`;
+  }).join("") + `<th class="fixed"></th>`;
+
+  $("dbbody").innerHTML = DB_ROWS.length ? DB_ROWS.map(a=>`
+    <tr>
+      <td class="acct"><a href="#" data-open="${esc(a.username)}">@${esc(a.username)}</a></td>
+      <td class="num">${(+a.followers).toLocaleString()}</td>
+      <td class="num">${esc(a.engagement)}</td>
+      <td><i class="q ${esc(a.quality)}" data-open="${esc(a.username)}" title="${esc(d["q_"+a.quality]||"")}"></i></td>
+      <td class="bio">${esc(a.index_hashtags)}</td>
+      <td class="num">${a.times_seen}</td>
+      <td>${esc(a.last_seen)}</td>
+      <td>${SAVED[a.username]
+            ? `<button class="plus done" data-add="${esc(a.username)}">✓</button>`
+            : `<button class="plus" data-add="${esc(a.username)}">+</button>`}</td>
+    </tr>`).join("")
+    : `<tr><td colspan="${DBCOLS.length+1}" class="blank">${esc(d.dbEmpty)}</td></tr>`;
+
+  $("dbbody").querySelectorAll("[data-open]").forEach(el=>{
+    el.onclick = e=>{ e.preventDefault(); openAccount(el.dataset.open); };
+  });
+  $("dbbody").querySelectorAll("[data-add]").forEach(b=>{
+    b.onclick = ()=> openSave([DB_ROWS.find(r=>r.username === b.dataset.add)]);
+  });
+  $("dbfoot").innerHTML = d.dbFoot(total, DB_ROWS.length);
+}
+
+/* ---------- アカウント詳細ドロワー ---------- */
+function sparkline(hist){
+  if (!hist || hist.length < 2)
+    return `<div class="empty-chart">${esc(t().dHistoryNone)}</div>`;
+  const W=360, H=72, P=8;
+  const vals = hist.map(h=>h.followers);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const span = (hi - lo) || 1;
+  const x = i => P + i * (W - 2*P) / (hist.length - 1);
+  const y = v => H - P - (v - lo) * (H - 2*P) / span;
+  const pts = hist.map((h,i)=>`${x(i).toFixed(1)},${y(h.followers).toFixed(1)}`).join(" ");
+  const first = hist[0], last = hist[hist.length-1];
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img">
+    <polyline points="${pts}" fill="none" stroke="#0F6B5C" stroke-width="1.6"/>
+    <circle cx="${x(hist.length-1)}" cy="${y(last.followers)}" r="2.4" fill="#0F6B5C"/>
+    <text x="${P}" y="${H-2}" font-size="8" fill="#98988F" font-family="monospace">${esc(first.date)} ${first.followers.toLocaleString()}</text>
+    <text x="${W-P}" y="10" font-size="8" fill="#16171A" text-anchor="end" font-family="monospace">${esc(last.date)} ${last.followers.toLocaleString()}</text>
+  </svg>`;
+}
+
+async function openAccount(username){
+  let a;
+  try{ a = (await api(`/api/accounts/${encodeURIComponent(username)}`)).account; }
+  catch(e){ toast(e.message); return; }
+  const d = t();
+  $("aName").textContent = "@" + a.username;
+  $("aName").href = a.url;
+  $("aFull").textContent = a.full_name || "";
+  $("aQual").className = "qbadge " + a.quality;
+  $("aQual").textContent = d["q_"+a.quality] || a.quality;
+  $("aBio").textContent = a.bio || "";
+  $("aStats").innerHTML = [
+    [ (+a.followers).toLocaleString(), d.cols.followers ],
+    [ a.engagement + "%", d.cols.engagement ],
+    [ a.avg_reel_views ? (+a.avg_reel_views).toLocaleString() : "—", d.colReel ],
+    [ a.posts_count || "—", d.dPosts ],
+    [ a.pr_count || "0", d.colPr ],
+    [ a.times_seen, d.dbTimes ],
+  ].map(([v,l])=>`<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
+  $("aChart").innerHTML = sparkline(a.history);
+  $("aFlags").innerHTML = a.quality_flags.length
+    ? a.quality_flags.map(f=>`<li>${esc(d["flag_"+f] || f)}</li>`).join("")
+    : `<li class="clean">${esc(d.flagClean)}</li>`;
+  $("aLists").innerHTML = a.in_lists.length
+    ? a.in_lists.map(n=>`<span>${esc(n)}</span>`).join("")
+    : `<span class="none">${esc(d.dNoLists)}</span>`;
+  $("aSim").innerHTML = a.similar.length
+    ? a.similar.map(s=>`<button data-sim="${esc(s.username)}">
+        <span>@${esc(s.username)}</span>
+        <span class="sf">${(+s.followers).toLocaleString()} / ${esc(s.engagement)}%</span>
+      </button>`).join("")
+    : `<span class="none" style="font-size:11px;color:var(--muted)">${esc(d.dSimilarNone)}</span>`;
+  $("aSim").querySelectorAll("[data-sim]").forEach(b=>{
+    b.onclick = ()=> openAccount(b.dataset.sim);
+  });
+  if (!$("acct").open) $("acct").showModal();
+}
+$("aClose").onclick = ()=> $("acct").close();
+$("acct").onclick = e=>{ if (e.target === $("acct")) $("acct").close(); };
+
+applyLang();
+loadLists();
+// 初回訪問でトークン未設定なら設定ダイアログを開く
+if (!tokens.apify()) setTimeout(()=> $("setup").showModal(), 400);
+
+</script>
+</body>
+</html>
