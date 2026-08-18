@@ -222,7 +222,7 @@ tbody tr:hover td{background:var(--card)}
 .blank{padding:44px 16px;text-align:center;color:var(--dim);font-size:12px;line-height:1.7}
 .foot{
   display:flex;align-items:center;gap:16px;flex-wrap:wrap;
-  padding:6px 12px;border-top:1px solid var(--rule);background:var(--card);
+  padding:6px 140px 6px 12px;border-top:1px solid var(--rule);background:var(--card);
   font-family:var(--mono);font-size:10px;color:var(--dim);
 }
 .foot b{color:var(--ink);font-weight:500}
@@ -286,6 +286,42 @@ dialog h3{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:
 dialog select,dialog input{width:100%;padding:7px 9px;border:1px solid var(--rule);
                            background:var(--paper);margin-bottom:9px;font-size:12.5px}
 .dlgrow{display:flex;justify-content:flex-end;gap:7px}
+
+/* ===== 透かし ===== */
+.wmark{
+  position:fixed;right:10px;bottom:8px;z-index:40;
+  font-family:var(--mono);font-size:9.5px;color:var(--muted);
+  text-decoration:none;opacity:.55;letter-spacing:.02em;
+  background:var(--paper);padding:2px 5px;
+}
+.wmark:hover{opacity:1;color:var(--accent)}
+
+/* ===== 起動画面 ===== */
+.splash{
+  position:fixed;inset:0;z-index:200;background:rgba(22,23,26,.5);
+  display:flex;align-items:center;justify-content:center;
+  animation:splashIn .15s ease-out;
+}
+.splash.out{animation:splashOut .18s ease-in forwards}
+@keyframes splashIn{from{opacity:0}to{opacity:1}}
+@keyframes splashOut{to{opacity:0}}
+.splash-card{
+  position:relative;width:340px;max-width:88vw;padding:26px 24px 20px;
+  background:var(--paper);border:1px solid var(--rule);text-align:center;
+}
+.splash-x{
+  position:absolute;top:8px;right:8px;width:24px;height:24px;border:0;background:none;
+  font-size:16px;color:var(--muted);cursor:pointer;line-height:1;
+}
+.splash-x:hover{color:var(--ink)}
+.splash-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--accent);margin:0 0 14px}
+.splash-line{font-size:13px;color:var(--ink);line-height:1.6;margin:0 0 14px}
+.splash-link{
+  display:block;font-family:var(--mono);font-size:11.5px;color:var(--dim);
+  text-decoration:none;border:1px solid var(--rule);padding:8px 10px;margin-bottom:2px;
+  word-break:break-all;
+}
+.splash-link:hover{border-color:var(--accent);color:var(--accent)}
 
 /* ===== 品質バッジ ===== */
 .q{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;cursor:pointer}
@@ -580,6 +616,22 @@ dialog.drawer::backdrop{background:rgba(22,23,26,.22)}
 <div class="toast" id="toast"></div>
 
 <!-- トークン設定（各自の API キー。ブラウザにのみ保存） -->
+<!-- 起動画面 -->
+<div id="splash" class="splash">
+  <div class="splash-card">
+    <button class="splash-x" id="splashX" aria-label="close">×</button>
+    <p class="splash-eyebrow">influencer・radar</p>
+    <p class="splash-line" data-i18n="splashLine"></p>
+    <a class="splash-link" href="https://github.com/xhqi01/influencer-radar-insta" target="_blank" rel="noopener">
+      github.com/xhqi01/influencer-radar-insta
+    </a>
+  </div>
+</div>
+
+<a class="wmark" href="https://github.com/xhqi01/influencer-radar-insta" target="_blank" rel="noopener">
+  github.com/xhqi01/influencer-radar-insta
+</a>
+
 <dialog id="setup">
   <h3 data-i18n="setupTitle"></h3>
   <p class="pnote" data-i18n="setupNote"></p>
@@ -793,6 +845,7 @@ ja:{
   setupSaved:"保存しました（このブラウザのみ）",
   errNoToken:"Apify トークンが未設定です。右上の「API設定」から自分のトークンを入れてください",
   parseHintNoAI:"AI 変換には右上の「API設定」で Anthropic キーの設定が必要です",
+  splashLine:"全てのコードはこちら：",
   savedTo:n=>`「${n}」に保存しました`, selectFirst:"先に行を選択してください",
   confirmDel:n=>`リスト「${n}」を削除します。よろしいですか？`, dupName:"同じ名前のリストがあります"
 },
@@ -949,6 +1002,7 @@ en:{
   setupSaved:"Saved (this browser only)",
   errNoToken:"No Apify token set. Open API setup (top right) and paste your own token",
   parseHintNoAI:"AI conversion needs your Anthropic key \u2014 set it in API setup (top right)",
+  splashLine:"All the code is here:",
   savedTo:n=>`Saved to "${n}"`, selectFirst:"Select some rows first",
   confirmDel:n=>`Delete the list "${n}"?`, dupName:"A list with that name already exists"
 },
@@ -1105,6 +1159,7 @@ zh:{
   setupSaved:"已保存（仅此浏览器）",
   errNoToken:"还没设置 Apify 令牌。点右上角「API设置」填入你自己的令牌",
   parseHintNoAI:"AI 转换需要你自己的 Anthropic 密钥——在右上角「API设置」里填",
+  splashLine:"完整代码都在这里：",
   savedTo:n=>`已存进「${n}」`, selectFirst:"请先勾选要保存的行",
   confirmDel:n=>`确定删除名单「${n}」吗？`, dupName:"已经有同名的名单了"
 }};
@@ -1796,6 +1851,25 @@ applyLang();
 loadLists();
 // 初回訪問でトークン未設定なら設定ダイアログを開く
 if (!tokens.apify()) setTimeout(()=> $("setup").showModal(), 400);
+
+/* ---------- 起動画面 ----------
+   ブラウザごとに1日1回だけ表示。自動では消えない：
+   ×か画面外クリックで明示的に閉じるまで表示され続ける。 */
+(function(){
+  const KEY = "radar_splash_seen";
+  const today = new Date().toISOString().slice(0,10);
+  if (localStorage.getItem(KEY) === today) { $("splash").remove(); return; }
+  localStorage.setItem(KEY, today);
+
+  let closed = false;
+  const close = ()=>{
+    if (closed) return; closed = true;
+    $("splash").classList.add("out");
+    setTimeout(()=> $("splash").remove(), 200);
+  };
+  $("splashX").onclick = close;
+  $("splash").addEventListener("click", e=>{ if (e.target.id === "splash") close(); });
+})();
 </script>
 </body>
 </html>
