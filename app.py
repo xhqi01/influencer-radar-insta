@@ -25,7 +25,7 @@ import traceback
 import uuid
 from datetime import datetime
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, session
 
 try:
     from dotenv import load_dotenv
@@ -37,6 +37,132 @@ import db
 import radar_core
 
 app = Flask(__name__)
+app.secret_key = db.get_or_create_secret()
+app.config.update(
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,   # 30日ログイン保持
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+
+
+# ---------------------------------------------------------------------------
+# 認証・グループ
+# ---------------------------------------------------------------------------
+def current_user():
+    uid = session.get("uid")
+    return db.get_user(uid) if uid else None
+
+
+def current_group_id():
+    """アクティブなグループ。セッションの選択がメンバー資格を失っていれば外す。"""
+    gid = session.get("gid")
+    uid = session.get("uid")
+    if gid and uid and db.is_member(gid, uid):
+        return gid
+    session.pop("gid", None)
+    return None
+
+
+AUTH_FREE = {"/", "/api/auth/register", "/api/auth/login", "/api/auth/logout", "/api/me"}
+
+
+@app.before_request
+def require_login():
+    p = request.path
+    if p in AUTH_FREE or not p.startswith("/api/"):
+        return None
+    if not current_user():
+        return jsonify({"error": "auth_required"}), 401
+    return None
+
+
+@app.route("/api/auth/register", methods=["POST"])
+def api_register():
+    d = request.get_json(silent=True) or {}
+    try:
+        uid = db.create_user(d.get("username") or "", d.get("password") or "")
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    session.permanent = True
+    session["uid"] = uid
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+    d = request.get_json(silent=True) or {}
+    u = db.verify_user(d.get("username") or "", d.get("password") or "")
+    if not u:
+        return jsonify({"error": "bad_credentials"}), 401
+    session.permanent = True
+    session["uid"] = u["id"]
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/me")
+def api_me():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "auth_required"}), 401
+    groups = db.user_groups(u["id"])
+    gid = current_group_id()
+    if gid is None and groups:            # 未選択なら最初のグループを自動選択
+        gid = groups[0]["id"]
+        session["gid"] = gid
+    return jsonify({"user": u, "groups": groups, "active_group": gid})
+
+
+@app.route("/api/groups", methods=["POST"])
+def api_group_create():
+    d = request.get_json(silent=True) or {}
+    try:
+        g = db.create_group(d.get("name") or "", current_user()["id"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    session["gid"] = g["id"]
+    return jsonify(g)
+
+
+@app.route("/api/groups/join", methods=["POST"])
+def api_group_join():
+    d = request.get_json(silent=True) or {}
+    try:
+        g = db.join_group(d.get("code") or "", current_user()["id"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    session["gid"] = g["id"]
+    return jsonify(g)
+
+
+@app.route("/api/groups/switch", methods=["POST"])
+def api_group_switch():
+    d = request.get_json(silent=True) or {}
+    gid = d.get("group_id")
+    if not gid or not db.is_member(gid, current_user()["id"]):
+        return jsonify({"error": "not_member"}), 403
+    session["gid"] = gid
+    return jsonify({"ok": True})
+
+
+@app.route("/api/groups/<int:group_id>/members")
+def api_group_members(group_id):
+    if not db.is_member(group_id, current_user()["id"]):
+        return jsonify({"error": "not_member"}), 403
+    return jsonify({"members": db.group_members(group_id)})
+
+
+@app.route("/api/groups/<int:group_id>/leave", methods=["POST"])
+def api_group_leave(group_id):
+    db.leave_group(group_id, current_user()["id"])
+    if session.get("gid") == group_id:
+        session.pop("gid", None)
+    return jsonify({"ok": True})
 
 CSV_COLUMNS = [
     "username", "url", "full_name", "followers", "growth", "engagement", "last_post",
@@ -49,9 +175,9 @@ LIST_CSV_EXTRA = ["item_status", "note", "added_by", "added_at"]
 
 
 def who(payload=None):
-    """簡易的な利用者名。認証ではなく『誰が追加したか』の記録用。"""
-    name = (payload or {}).get("user") if isinstance(payload, dict) else None
-    return (name or request.headers.get("X-Radar-User") or "").strip()[:40]
+    """『誰が追加したか』の記録用。ログインユーザー名を使う。"""
+    u = current_user()
+    return u["username"] if u else ""
 
 
 def csv_response(rows, columns, filename):
@@ -123,7 +249,8 @@ def api_search():
         return jsonify({"error": "no_apify_token"}), 400
 
     job_id = uuid.uuid4().hex[:12]
-    db.create_job(job_id, payload, created_by=creator)
+    gid = current_group_id()   # スレッド内では session に触れないため、ここで確定させる
+    db.create_job(job_id, payload, created_by=creator, group_id=gid)
 
     def worker():
         try:
@@ -131,7 +258,7 @@ def api_search():
 
             # 「キャンペーンリスト除外」: すでにリストに入っている人を候補から外す
             if payload.pop("exclude_saved", False):
-                payload["exclude_usernames"] = db.saved_usernames()
+                payload["exclude_usernames"] = db.saved_usernames(gid)
 
             out = radar_core.run_search(
                 payload,
@@ -222,10 +349,25 @@ def api_account_detail(username):
 # ---------------------------------------------------------------------------
 # フォルダ
 # ---------------------------------------------------------------------------
+def owned_list(list_id):
+    """アクティブグループに属するリストのみ返す（他グループのIDを弾く）。"""
+    meta = db.get_list(list_id)
+    if meta and meta.get("group_id") == current_group_id():
+        return meta
+    return None
+
+
+def owned_folder(folder_id):
+    f = db.get_folder(folder_id)
+    if f and f.get("group_id") == current_group_id():
+        return f
+    return None
+
+
 @app.route("/api/tree")
 def api_tree():
     """フォルダ + リストの構造をまとめて返す（左ナビ用）。"""
-    return jsonify(db.tree())
+    return jsonify(db.tree(current_group_id()))
 
 
 @app.route("/api/folders", methods=["POST"])
@@ -234,8 +376,10 @@ def api_create_folder():
     name = (payload.get("name") or "").strip()
     if not name:
         return jsonify({"error": "no_name"}), 400
+    if current_group_id() is None:
+        return jsonify({"error": "no_group"}), 400
     try:
-        fid = db.create_folder(name, created_by=who(payload))
+        fid = db.create_folder(name, created_by=who(payload), group_id=current_group_id())
     except Exception:
         return jsonify({"error": "duplicate_name"}), 409
     return jsonify({"id": fid, "name": name})
@@ -243,7 +387,7 @@ def api_create_folder():
 
 @app.route("/api/folders/<int:folder_id>", methods=["PATCH", "DELETE"])
 def api_folder(folder_id):
-    if not db.get_folder(folder_id):
+    if not owned_folder(folder_id):
         return jsonify({"error": "not_found"}), 404
 
     if request.method == "DELETE":
@@ -264,10 +408,12 @@ def api_folder(folder_id):
 
 @app.route("/api/lists/<int:list_id>/move", methods=["POST"])
 def api_move_list(list_id):
-    if not db.get_list(list_id):
+    if not owned_list(list_id):
         return jsonify({"error": "not_found"}), 404
     payload = request.get_json(silent=True) or {}
     fid = payload.get("folder_id")
+    if fid and not owned_folder(int(fid)):
+        return jsonify({"error": "not_found"}), 404
     db.move_list(list_id, int(fid) if fid else None)
     return jsonify({"ok": True})
 
@@ -278,14 +424,14 @@ def api_move_list(list_id):
 @app.route("/api/saved")
 def api_saved():
     """全リスト横断で保存済みの人を探す。?q= で絞り込み。"""
-    return jsonify({"items": db.find_saved(request.args.get("q", "").strip())})
+    return jsonify({"items": db.find_saved(request.args.get("q", "").strip(), group_id=current_group_id())})
 
 
 @app.route("/api/saved/map", methods=["POST"])
 def api_saved_map():
     """検索結果に『保存済み』バッジを出すための {username: [リスト名]} を返す。"""
     payload = request.get_json(silent=True) or {}
-    return jsonify({"map": db.saved_map(payload.get("usernames") or [])})
+    return jsonify({"map": db.saved_map(payload.get("usernames") or [], group_id=current_group_id())})
 
 
 # ---------------------------------------------------------------------------
@@ -294,16 +440,18 @@ def api_saved_map():
 @app.route("/api/lists", methods=["GET", "POST"])
 def api_lists():
     if request.method == "GET":
-        return jsonify({"lists": db.all_lists()})
+        return jsonify({"lists": db.all_lists(current_group_id())})
 
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
         return jsonify({"error": "no_name"}), 400
     fid = payload.get("folder_id")
+    if current_group_id() is None:
+        return jsonify({"error": "no_group"}), 400
     try:
         list_id = db.create_list(name, payload.get("description", ""),
-                                 created_by=who(payload),
+                                 created_by=who(payload), group_id=current_group_id(),
                                  folder_id=int(fid) if fid else None)
     except Exception:
         return jsonify({"error": "duplicate_name"}), 409
@@ -312,7 +460,7 @@ def api_lists():
 
 @app.route("/api/lists/<int:list_id>", methods=["GET", "PATCH", "DELETE"])
 def api_list_detail(list_id):
-    meta = db.get_list(list_id)
+    meta = owned_list(list_id)
     if not meta:
         return jsonify({"error": "not_found"}), 404
 
@@ -336,7 +484,7 @@ def api_list_detail(list_id):
 
 @app.route("/api/lists/<int:list_id>/items", methods=["POST"])
 def api_add_items(list_id):
-    if not db.get_list(list_id):
+    if not owned_list(list_id):
         return jsonify({"error": "not_found"}), 404
     payload = request.get_json(silent=True) or {}
     items = payload.get("items") or ([payload["item"]] if payload.get("item") else [])
@@ -352,6 +500,8 @@ def api_add_items(list_id):
 
 @app.route("/api/items/<int:item_id>", methods=["PATCH", "DELETE"])
 def api_item(item_id):
+    if db.item_group(item_id) != current_group_id():
+        return jsonify({"error": "not_found"}), 404
     if request.method == "DELETE":
         db.delete_item(item_id)
         return jsonify({"ok": True})
@@ -362,7 +512,7 @@ def api_item(item_id):
 
 @app.route("/api/export/list/<int:list_id>")
 def api_export_list(list_id):
-    meta = db.get_list(list_id)
+    meta = owned_list(list_id)
     if not meta:
         return jsonify({"error": "not_found"}), 404
     items = db.list_items(list_id)

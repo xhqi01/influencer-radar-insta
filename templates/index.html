@@ -44,10 +44,6 @@ input,select,textarea,button{font-family:inherit;font-size:inherit;color:inherit
 .navtabs button[aria-selected="true"]{background:var(--ink);color:#fff}
 .navtabs .cnt{font-size:10px;opacity:.65;margin-left:5px}
 .bar .push{flex:1}
-.whoami{
-  width:104px;padding:5px 8px;font-family:var(--mono);font-size:11px;
-  border:1px solid var(--rule);background:var(--paper);
-}
 .langs{display:flex;border:1px solid var(--rule)}
 .langs button{
   font-family:var(--mono);font-size:10px;padding:5px 9px;border:0;
@@ -157,6 +153,28 @@ textarea.mini{
   background:var(--card);border:1px solid var(--rule);text-transform:uppercase;
 }
 .av-lg{width:42px;height:42px;border-radius:50%;object-fit:cover;border:1px solid var(--rule);flex:none}
+
+/* ===== 認証・グループ ===== */
+.auth-wall{
+  position:fixed;inset:0;z-index:300;background:var(--paper);
+  display:flex;align-items:center;justify-content:center;
+}
+.auth-card{width:320px;max-width:88vw}
+.auth-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--accent);margin:0 0 6px}
+.auth-card h2{font-size:16px;margin:0 0 16px;font-weight:600}
+.auth-card .btn{width:100%;margin-top:8px}
+.auth-msg{font-size:11px;color:var(--accent);min-height:15px;margin:6px 0 0}
+.gsel{
+  max-width:150px;padding:3px 6px;font-family:var(--sans);font-size:11px;
+  background:var(--card);border:1px solid var(--rule);color:var(--ink);
+}
+.uname{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.grp-row{
+  display:flex;align-items:center;gap:8px;padding:6px 0;font-size:11.5px;
+  border-bottom:1px solid var(--rule);
+}
+.grp-row .code{font-family:var(--mono);font-size:10px;color:var(--dim);cursor:pointer}
+.grp-row .code:hover{color:var(--accent)}
 
 .btn{
   font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;
@@ -391,7 +409,10 @@ dialog.drawer::backdrop{background:rgba(22,23,26,.22)}
     </button>
   </div>
   <span class="push"></span>
-  <input class="whoami" id="whoami">
+  <select id="groupSel" class="gsel" hidden></select>
+  <button class="btn ghost xs" id="groupBtn" data-i18n="groupBtn" hidden></button>
+  <span class="uname" id="uname"></span>
+  <button class="btn ghost xs" id="logoutBtn" data-i18n="logoutBtn" hidden></button>
   <button class="btn ghost xs" id="setupBtn" data-i18n="setupBtn"></button>
   <div class="langs" role="group" aria-label="Language">
     <button data-lang="ja" aria-pressed="true">JA</button>
@@ -624,6 +645,33 @@ dialog.drawer::backdrop{background:rgba(22,23,26,.22)}
   github.com/xhqi01/influencer-radar-insta
 </a>
 
+<!-- ログイン／新規登録（未認証時に全画面表示） -->
+<div id="authWall" class="auth-wall" hidden>
+  <div class="auth-card">
+    <p class="auth-eyebrow">influencer・radar</p>
+    <h2 id="authTitle"></h2>
+    <div class="f"><label data-i18n="authUser"></label><input id="authU" autocomplete="username"></div>
+    <div class="f"><label data-i18n="authPass"></label><input id="authP" type="password" autocomplete="current-password"></div>
+    <p class="auth-msg" id="authMsg"></p>
+    <button class="btn" id="authGo"></button>
+    <button class="btn ghost" id="authSwap"></button>
+  </div>
+</div>
+
+<!-- グループ管理 -->
+<dialog id="groupDlg">
+  <h3 data-i18n="grpTitle"></h3>
+  <div id="grpMine"></div>
+  <div class="f"><label data-i18n="grpCreate"></label>
+    <div class="duo"><input id="grpName"><button class="btn xs" id="grpCreateBtn" data-i18n="grpCreateBtn"></button></div>
+  </div>
+  <div class="f"><label data-i18n="grpJoin"></label>
+    <div class="duo"><input id="grpCode" data-i18n-ph="grpCodePh"><button class="btn xs" id="grpJoinBtn" data-i18n="grpJoinBtn"></button></div>
+  </div>
+  <p class="auth-msg" id="grpMsg"></p>
+  <div class="dlgrow"><button class="btn ghost xs" id="grpClose" data-i18n="close"></button></div>
+</dialog>
+
 <!-- トークン設定（各自の API キー。ブラウザにのみ保存） -->
 <dialog id="setup">
   <h3 data-i18n="setupTitle"></h3>
@@ -688,8 +736,7 @@ dialog.drawer::backdrop{background:rgba(22,23,26,.22)}
 // AI 機能は各利用者が自分の Anthropic キーを設定しているかで決まる（hasAI()）
 
 const I18N = {
-ja:{
-  whoamiPh:"名前", tabSearch:"検索", tabLists:"リスト",
+ja:{ tabSearch:"検索", tabLists:"リスト",
   briefTitle:"やりたいこと",
   briefPh:"日本の宅トレ系の女性を探したい。フォロワー1万〜7万、ちゃんと喋ってる動画を出してる人。最近も動いてるアカウントで。",
   parseBtn:"条件に変換", parseHint:"書いた文章を下の条件に落とし込みます",
@@ -775,7 +822,6 @@ ja:{
   colNarr:"ナレーション",
   colStatus:"ステータス",
   moveToL:"フォルダへ移動",
-  whoamiL:"あなたの名前",
   acAny:"指定なし",
   ac3m:"3ヶ月以内",
   ac6m:"6ヶ月以内",
@@ -845,11 +891,33 @@ ja:{
   hmIntersect:"すべて（積集合）",
   hmHelp:n=>`${n}個のタグ。「どれか」=いずれかのタグに投稿があれば対象。「すべて」=全タグに投稿がある人だけ（候補は大きく減ります）`,
   hHashtag:"改行かカンマ区切りで最大5個。#は不要。例：筋トレ",
+  groupBtn:"グループ",
+  logoutBtn:"ログアウト",
+  authLoginTitle:"ログイン",
+  authRegTitle:"新規登録",
+  authUser:"ユーザー名",
+  authPass:"パスワード（8文字以上）",
+  authLoginBtn:"ログイン",
+  authRegBtn:"登録してはじめる",
+  authToReg:"アカウントを作る",
+  authToLogin:"ログインに戻る",
+  authErr:{bad_credentials:"ユーザー名かパスワードが違います",username_taken:"そのユーザー名は使われています",password_too_short:"パスワードは8文字以上にしてください",bad_username:"ユーザー名は2〜40文字で",generic:"エラーが発生しました"},
+  grpTitle:"ワークグループ",
+  grpCreate:"新しいグループを作る",
+  grpCreateBtn:"作成",
+  grpJoin:"招待コードで参加",
+  grpJoinBtn:"参加",
+  grpCodePh:"コード",
+  grpMembers:"人",
+  grpCopyTip:"クリックでコピー",
+  grpCopied:"招待コードをコピーしました",
+  grpNone:"まだグループがありません。作成するか、同僚から招待コードをもらって参加してください。リストとフォルダはグループ内で共有されます。",
+  grpErr:{bad_code:"招待コードが見つかりません",bad_name:"グループ名を入力してください",no_group:"先にグループを作成/参加してください"},
+  close:"閉じる",
   savedTo:n=>`「${n}」に保存しました`, selectFirst:"先に行を選択してください",
   confirmDel:n=>`リスト「${n}」を削除します。よろしいですか？`, dupName:"同じ名前のリストがあります"
 },
-en:{
-  whoamiPh:"Name", tabSearch:"Search", tabLists:"Lists",
+en:{ tabSearch:"Search", tabLists:"Lists",
   briefTitle:"What you're after",
   briefPh:"Women posting home-workout content in Japan, 10k–70k followers, ideally ones who talk on camera, still posting recently.",
   parseBtn:"Turn into filters", parseHint:"Your description becomes the filters below",
@@ -935,7 +1003,6 @@ en:{
   colNarr:"Narration",
   colStatus:"Status",
   moveToL:"Move to folder",
-  whoamiL:"Your name",
   acAny:"No limit",
   ac3m:"Within 3 months",
   ac6m:"Within 6 months",
@@ -1005,11 +1072,33 @@ en:{
   hmIntersect:"All (intersect)",
   hmHelp:n=>`${n} tags. Any = posted under at least one. All = only accounts with posts under every tag (cuts the pool hard)`,
   hHashtag:"Up to 5, separated by newlines or commas. No #. e.g. fitness",
+  groupBtn:"Groups",
+  logoutBtn:"Log out",
+  authLoginTitle:"Log in",
+  authRegTitle:"Create account",
+  authUser:"Username",
+  authPass:"Password (8+ chars)",
+  authLoginBtn:"Log in",
+  authRegBtn:"Sign up",
+  authToReg:"Create an account",
+  authToLogin:"Back to login",
+  authErr:{bad_credentials:"Wrong username or password",username_taken:"That username is taken",password_too_short:"Password needs 8+ characters",bad_username:"Username must be 2-40 characters",generic:"Something went wrong"},
+  grpTitle:"Workgroups",
+  grpCreate:"Create a group",
+  grpCreateBtn:"Create",
+  grpJoin:"Join with invite code",
+  grpJoinBtn:"Join",
+  grpCodePh:"code",
+  grpMembers:" members",
+  grpCopyTip:"Click to copy",
+  grpCopied:"Invite code copied",
+  grpNone:"No groups yet. Create one, or join with an invite code from a teammate. Lists and folders are shared within a group.",
+  grpErr:{bad_code:"Invite code not found",bad_name:"Enter a group name",no_group:"Create or join a group first"},
+  close:"Close",
   savedTo:n=>`Saved to "${n}"`, selectFirst:"Select some rows first",
   confirmDel:n=>`Delete the list "${n}"?`, dupName:"A list with that name already exists"
 },
-zh:{
-  whoamiPh:"名字", tabSearch:"搜索", tabLists:"名单",
+zh:{ tabSearch:"搜索", tabLists:"名单",
   briefTitle:"你想找什么",
   briefPh:"日本做居家健身的女生，粉丝一万到七万，最好视频里有真人讲解，而且最近还在更新。",
   parseBtn:"转成筛选条件", parseHint:"把你写的这段话变成下面的条件",
@@ -1095,7 +1184,6 @@ zh:{
   colNarr:"讲解",
   colStatus:"状态",
   moveToL:"移到文件夹",
-  whoamiL:"你的名字",
   acAny:"不限",
   ac3m:"3个月内",
   ac6m:"6个月内",
@@ -1165,6 +1253,29 @@ zh:{
   hmIntersect:"全部（交集）",
   hmHelp:n=>`${n}个标签。任一=在其中任何一个标签下发过帖就算。全部=每个标签下都发过帖的人才算（候选会大幅减少）`,
   hHashtag:"换行或逗号分隔，最多5个。不用写#。例：筋トレ",
+  groupBtn:"小组",
+  logoutBtn:"退出登录",
+  authLoginTitle:"登录",
+  authRegTitle:"注册",
+  authUser:"用户名",
+  authPass:"密码（至少8位）",
+  authLoginBtn:"登录",
+  authRegBtn:"注册并开始",
+  authToReg:"创建账号",
+  authToLogin:"返回登录",
+  authErr:{bad_credentials:"用户名或密码不对",username_taken:"这个用户名已被占用",password_too_short:"密码至少8位",bad_username:"用户名需要2-40个字符",generic:"出错了"},
+  grpTitle:"工作小组",
+  grpCreate:"创建新小组",
+  grpCreateBtn:"创建",
+  grpJoin:"用邀请码加入",
+  grpJoinBtn:"加入",
+  grpCodePh:"邀请码",
+  grpMembers:"人",
+  grpCopyTip:"点击复制",
+  grpCopied:"邀请码已复制",
+  grpNone:"还没有小组。创建一个，或者向同事要邀请码加入。名单和文件夹在小组内共享。",
+  grpErr:{bad_code:"邀请码不存在",bad_name:"请输入小组名",no_group:"请先创建或加入小组"},
+  close:"关闭",
   savedTo:n=>`已存进「${n}」`, selectFirst:"请先勾选要保存的行",
   confirmDel:n=>`确定删除名单「${n}」吗？`, dupName:"已经有同名的名单了"
 }};
@@ -1179,7 +1290,9 @@ const $ = id => document.getElementById(id);
 const t = () => I18N[LANG];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const me = () => $("whoami").value.trim();
+/* ---------- 認証状態 ---------- */
+let ME = null;          // {user:{id,username}, groups:[...], active_group}
+const me = () => ME ? ME.user.username : "";
 
 function toast(m){
   const el = $("toast"); el.textContent = m; el.classList.add("on");
@@ -1195,13 +1308,109 @@ const hasAI = () => !!tokens.anthropic();
 async function api(url, opts={}){
   const r = await fetch(url, {headers:{
     "Content-Type":"application/json",
-    "X-Radar-User":me(),
     "X-Apify-Token":tokens.apify(),
     "X-Anthropic-Key":tokens.anthropic(),
   }, ...opts});
   const d = await r.json().catch(()=>({}));
+  if (r.status === 401 && !url.startsWith("/api/auth/")){ showAuth(true); throw new Error("auth_required"); }
   if (!r.ok) throw new Error(d.error || r.status);
   return d;
+}
+
+/* ---------- ログイン／登録 ---------- */
+let AUTH_MODE = "login";
+function showAuth(on){
+  $("authWall").hidden = !on;
+  if (on){ renderAuth(); $("authU").focus(); }
+}
+function renderAuth(){
+  const d = t();
+  $("authTitle").textContent = AUTH_MODE === "login" ? d.authLoginTitle : d.authRegTitle;
+  $("authGo").textContent   = AUTH_MODE === "login" ? d.authLoginBtn  : d.authRegBtn;
+  $("authSwap").textContent = AUTH_MODE === "login" ? d.authToReg     : d.authToLogin;
+  $("authMsg").textContent = "";
+}
+$("authSwap").onclick = ()=>{ AUTH_MODE = AUTH_MODE === "login" ? "register" : "login"; renderAuth(); };
+$("authGo").onclick = async ()=>{
+  const d = t();
+  const body = JSON.stringify({username:$("authU").value.trim(), password:$("authP").value});
+  try{
+    await api(`/api/auth/${AUTH_MODE === "login" ? "login" : "register"}`, {method:"POST", body});
+    $("authP").value = "";
+    await boot();
+  }catch(e){
+    $("authMsg").textContent = d.authErr[e.message] || d.authErr.generic;
+  }
+};
+$("authP").addEventListener("keydown", e=>{ if (e.key === "Enter") $("authGo").click(); });
+
+$("logoutBtn").onclick = async ()=>{
+  await api("/api/auth/logout", {method:"POST"});
+  ME = null; location.reload();
+};
+
+/* ---------- グループ ---------- */
+function renderGroupBar(){
+  const d = t();
+  const has = ME && ME.groups.length > 0;
+  $("groupSel").hidden = !has;
+  $("groupBtn").hidden = !ME;
+  $("logoutBtn").hidden = !ME;
+  $("uname").textContent = ME ? ME.user.username : "";
+  if (has){
+    $("groupSel").innerHTML = ME.groups.map(g=>
+      `<option value="${g.id}" ${g.id===ME.active_group?"selected":""}>${esc(g.name)}</option>`).join("");
+  }
+}
+$("groupSel").onchange = async e=>{
+  await api("/api/groups/switch",{method:"POST",body:JSON.stringify({group_id:+e.target.value})});
+  await boot();
+};
+$("groupBtn").onclick = ()=>{ renderGroupDlg(); $("groupDlg").showModal(); };
+$("grpClose").onclick = ()=> $("groupDlg").close();
+
+function renderGroupDlg(){
+  const d = t();
+  $("grpMine").innerHTML = ME.groups.map(g=>`
+    <div class="grp-row">
+      <b>${esc(g.name)}</b>
+      <span class="dim">${g.member_count}${d.grpMembers}</span>
+      <span class="push"></span>
+      <span class="code" data-code="${esc(g.invite_code)}" title="${esc(d.grpCopyTip)}">${esc(g.invite_code)}</span>
+    </div>`).join("") || `<p class="pnote">${esc(d.grpNone)}</p>`;
+  $("grpMine").querySelectorAll(".code").forEach(el=>{
+    el.onclick = ()=>{ navigator.clipboard.writeText(el.dataset.code); toast(d.grpCopied); };
+  });
+  $("grpMsg").textContent = "";
+}
+$("grpCreateBtn").onclick = async ()=>{
+  const name = $("grpName").value.trim(); if (!name) return;
+  try{
+    await api("/api/groups",{method:"POST",body:JSON.stringify({name})});
+    $("grpName").value = "";
+    await boot(); renderGroupDlg();
+  }catch(e){ $("grpMsg").textContent = t().grpErr[e.message] || e.message; }
+};
+$("grpJoinBtn").onclick = async ()=>{
+  const code = $("grpCode").value.trim(); if (!code) return;
+  try{
+    await api("/api/groups/join",{method:"POST",body:JSON.stringify({code})});
+    $("grpCode").value = "";
+    await boot(); renderGroupDlg();
+  }catch(e){ $("grpMsg").textContent = t().grpErr[e.message] || e.message; }
+};
+
+/* ---------- 起動 ---------- */
+async function boot(){
+  try{
+    ME = await fetch("/api/me").then(r=> r.ok ? r.json() : null);
+  }catch(_){ ME = null; }
+  if (!ME){ showAuth(true); return; }
+  showAuth(false);
+  renderGroupBar();
+  loadLists();
+  // グループ未所属なら管理ダイアログを開いて作成/参加を促す
+  if (!ME.groups.length){ renderGroupDlg(); $("groupDlg").showModal(); }
 }
 
 /* ---------- トークン設定 ---------- */
@@ -1231,6 +1440,7 @@ function applyLang(){
   });
   $("parseHint").textContent = hasAI() ? d.parseHint : d.parseHintNoAI;
   $("parseBtn").disabled = !hasAI();
+  if (!$("authWall").hidden) renderAuth();
 
   $("chips").innerHTML = "";
   d.examples.forEach(ex=>{
@@ -1268,8 +1478,6 @@ document.querySelectorAll(".navtabs button").forEach(b=>{
     if (VIEW === "db") loadDb();
   };
 });
-$("whoami").value = localStorage.getItem("radar_user") || "";
-$("whoami").oninput = ()=> localStorage.setItem("radar_user", $("whoami").value);
 
 /* ---------- brief -> filters ---------- */
 $("parseBtn").onclick = async ()=>{
@@ -1886,9 +2094,10 @@ $("aClose").onclick = ()=> $("acct").close();
 $("acct").onclick = e=>{ if (e.target === $("acct")) $("acct").close(); };
 
 applyLang();
-loadLists();
-// 初回訪問でトークン未設定なら設定ダイアログを開く
-if (!tokens.apify()) setTimeout(()=> $("setup").showModal(), 400);
+boot().then(()=>{
+  // ログイン済みでトークン未設定なら設定ダイアログを開く
+  if (ME && ME.groups.length && !tokens.apify()) setTimeout(()=> $("setup").showModal(), 400);
+});
 
 </script>
 </body>

@@ -7,15 +7,45 @@ db.py — SQLite 永続化レイヤー
 
 import json
 import os
+import secrets
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
+
+from werkzeug.security import check_password_hash, generate_password_hash
 
 DB_PATH = os.getenv("RADAR_DB", os.path.join(os.path.dirname(__file__), "radar.db"))
 _init_lock = threading.Lock()
 _initialized = False
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS app_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS groups (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    invite_code TEXT NOT NULL UNIQUE,
+    created_by  INTEGER REFERENCES users(id),
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id  INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    joined_at TEXT NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS jobs (
     id          TEXT PRIMARY KEY,
     status      TEXT NOT NULL,
@@ -37,7 +67,8 @@ CREATE TABLE IF NOT EXISTS job_results (
 
 CREATE TABLE IF NOT EXISTS folders (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT NOT NULL UNIQUE,
+    name       TEXT NOT NULL,
+    group_id   INTEGER REFERENCES groups(id),
     created_by TEXT,
     created_at TEXT NOT NULL
 );
@@ -45,7 +76,8 @@ CREATE TABLE IF NOT EXISTS folders (
 CREATE TABLE IF NOT EXISTS lists (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     folder_id   INTEGER REFERENCES folders(id) ON DELETE SET NULL,
-    name        TEXT NOT NULL UNIQUE,
+    group_id    INTEGER REFERENCES groups(id),
+    name        TEXT NOT NULL,
     description TEXT,
     created_by  TEXT,
     created_at  TEXT NOT NULL
@@ -91,11 +123,18 @@ CREATE INDEX IF NOT EXISTS idx_results_job ON job_results(job_id);
 # 既存 DB にはまだ無いため、テーブル定義と同時に実行すると落ちる。
 INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_lists_folder ON lists(folder_id);
+CREATE INDEX IF NOT EXISTS idx_lists_group ON lists(group_id);
+CREATE INDEX IF NOT EXISTS idx_folders_group ON folders(group_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_lists_name ON lists(COALESCE(group_id,0), name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_folders_name ON folders(COALESCE(group_id,0), name);
 """
 
-# 既存 DB（folders 導入前）を壊さずに更新するための追加カラム
+# 既存 DB（folders / groups 導入前）を壊さずに更新するための追加カラム
 MIGRATIONS = [
     ("lists", "folder_id", "ALTER TABLE lists ADD COLUMN folder_id INTEGER REFERENCES folders(id)"),
+    ("lists", "group_id", "ALTER TABLE lists ADD COLUMN group_id INTEGER REFERENCES groups(id)"),
+    ("folders", "group_id", "ALTER TABLE folders ADD COLUMN group_id INTEGER REFERENCES groups(id)"),
+    ("jobs", "group_id", "ALTER TABLE jobs ADD COLUMN group_id INTEGER REFERENCES groups(id)"),
 ]
 
 
@@ -108,6 +147,122 @@ def _migrate(conn):
 
 def now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ---------------------------------------------------------------------------
+# アプリ設定（セッション署名キーなど）
+# ---------------------------------------------------------------------------
+def get_or_create_secret():
+    """Flask セッション署名用のキー。環境変数が無ければ生成して DB に保存する
+    （再起動してもログインが切れないように、DB と同じ寿命で持つ）。"""
+    env = os.getenv("SECRET_KEY")
+    if env:
+        return env
+    with connect() as c:
+        row = c.execute("SELECT value FROM app_meta WHERE key='secret_key'").fetchone()
+        if row:
+            return row["value"]
+        secret = secrets.token_hex(32)
+        c.execute("INSERT INTO app_meta (key,value) VALUES ('secret_key',?)", (secret,))
+        return secret
+
+
+# ---------------------------------------------------------------------------
+# ユーザー認証
+# ---------------------------------------------------------------------------
+def create_user(username, password):
+    username = username.strip()
+    if not (2 <= len(username) <= 40):
+        raise ValueError("bad_username")
+    if len(password) < 8:
+        raise ValueError("password_too_short")
+    with connect() as c:
+        try:
+            cur = c.execute(
+                "INSERT INTO users (username,password_hash,created_at) VALUES (?,?,?)",
+                (username, generate_password_hash(password), now()))
+        except sqlite3.IntegrityError:
+            raise ValueError("username_taken")
+        return cur.lastrowid
+
+
+def verify_user(username, password):
+    with connect() as c:
+        row = c.execute("SELECT * FROM users WHERE username=?", (username.strip(),)).fetchone()
+    if row and check_password_hash(row["password_hash"], password):
+        return {"id": row["id"], "username": row["username"]}
+    return None
+
+
+def get_user(user_id):
+    with connect() as c:
+        row = c.execute("SELECT id, username FROM users WHERE id=?", (user_id,)).fetchone()
+    return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# グループ（ワークスペース）
+# ---------------------------------------------------------------------------
+def create_group(name, user_id):
+    """グループを作成し、作成者をメンバーに追加する。
+    最初のグループが作られたとき、グループ導入前の既存リスト・フォルダを
+    そのグループに引き取らせる（チームの既存データを迷子にしないため）。"""
+    name = name.strip()
+    if not name:
+        raise ValueError("bad_name")
+    code = secrets.token_urlsafe(6)
+    with connect() as c:
+        first = c.execute("SELECT COUNT(*) AS n FROM groups").fetchone()["n"] == 0
+        cur = c.execute(
+            "INSERT INTO groups (name,invite_code,created_by,created_at) VALUES (?,?,?,?)",
+            (name, code, user_id, now()))
+        gid = cur.lastrowid
+        c.execute("INSERT INTO group_members (group_id,user_id,joined_at) VALUES (?,?,?)",
+                  (gid, user_id, now()))
+        if first:
+            c.execute("UPDATE lists SET group_id=? WHERE group_id IS NULL", (gid,))
+            c.execute("UPDATE folders SET group_id=? WHERE group_id IS NULL", (gid,))
+    return {"id": gid, "name": name, "invite_code": code}
+
+
+def join_group(code, user_id):
+    with connect() as c:
+        g = c.execute("SELECT * FROM groups WHERE invite_code=?", (code.strip(),)).fetchone()
+        if not g:
+            raise ValueError("bad_code")
+        c.execute("INSERT OR IGNORE INTO group_members (group_id,user_id,joined_at) VALUES (?,?,?)",
+                  (g["id"], user_id, now()))
+        return {"id": g["id"], "name": g["name"], "invite_code": g["invite_code"]}
+
+
+def leave_group(group_id, user_id):
+    with connect() as c:
+        c.execute("DELETE FROM group_members WHERE group_id=? AND user_id=?", (group_id, user_id))
+
+
+def user_groups(user_id):
+    with connect() as c:
+        rows = c.execute(
+            "SELECT g.id, g.name, g.invite_code, "
+            "(SELECT COUNT(*) FROM group_members m2 WHERE m2.group_id=g.id) AS member_count "
+            "FROM groups g JOIN group_members m ON m.group_id=g.id "
+            "WHERE m.user_id=? ORDER BY g.created_at", (user_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def group_members(group_id):
+    with connect() as c:
+        rows = c.execute(
+            "SELECT u.username, m.joined_at FROM group_members m "
+            "JOIN users u ON u.id=m.user_id WHERE m.group_id=? ORDER BY m.joined_at",
+            (group_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def is_member(group_id, user_id):
+    with connect() as c:
+        return c.execute("SELECT 1 FROM group_members WHERE group_id=? AND user_id=?",
+                         (group_id, user_id)).fetchone() is not None
 
 
 def connect():
@@ -139,11 +294,13 @@ def connect():
 # ---------------------------------------------------------------------------
 # ジョブ
 # ---------------------------------------------------------------------------
-def create_job(job_id, params, created_by=None):
+def create_job(job_id, params, created_by=None, group_id=None):
     with connect() as c:
         c.execute(
-            "INSERT INTO jobs (id,status,stage,params,created_by,created_at) VALUES (?,?,?,?,?,?)",
-            (job_id, "queued", "queued", json.dumps(params, ensure_ascii=False), created_by, now()),
+            "INSERT INTO jobs (id,status,stage,params,created_by,created_at,group_id) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (job_id, "queued", "queued", json.dumps(params, ensure_ascii=False),
+             created_by, now(), group_id),
         )
 
 
@@ -353,18 +510,19 @@ def growth_map(usernames):
 # ---------------------------------------------------------------------------
 # フォルダ
 # ---------------------------------------------------------------------------
-def create_folder(name, created_by=None):
+def create_folder(name, created_by=None, group_id=None):
     with connect() as c:
         cur = c.execute(
-            "INSERT INTO folders (name,created_by,created_at) VALUES (?,?,?)",
-            (name.strip(), created_by, now()),
+            "INSERT INTO folders (name,created_by,created_at,group_id) VALUES (?,?,?,?)",
+            (name.strip(), created_by, now(), group_id),
         )
         return cur.lastrowid
 
 
-def all_folders():
+def all_folders(group_id=None):
     with connect() as c:
-        rows = c.execute("SELECT * FROM folders ORDER BY name").fetchall()
+        rows = c.execute("SELECT * FROM folders WHERE group_id IS ? ORDER BY name",
+                         (group_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -394,28 +552,30 @@ def get_folder(folder_id):
 # ---------------------------------------------------------------------------
 # リスト
 # ---------------------------------------------------------------------------
-def create_list(name, description="", created_by=None, folder_id=None):
+def create_list(name, description="", created_by=None, folder_id=None, group_id=None):
     with connect() as c:
         cur = c.execute(
-            "INSERT INTO lists (name,description,created_by,created_at,folder_id) VALUES (?,?,?,?,?)",
-            (name.strip(), description, created_by, now(), folder_id),
+            "INSERT INTO lists (name,description,created_by,created_at,folder_id,group_id) "
+            "VALUES (?,?,?,?,?,?)",
+            (name.strip(), description, created_by, now(), folder_id, group_id),
         )
         return cur.lastrowid
 
 
-def all_lists():
+def all_lists(group_id=None):
     with connect() as c:
         rows = c.execute(
             "SELECT l.*, (SELECT COUNT(*) FROM list_items i WHERE i.list_id=l.id) AS count "
-            "FROM lists l ORDER BY l.created_at DESC"
+            "FROM lists l WHERE l.group_id IS ? ORDER BY l.created_at DESC",
+            (group_id,)
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def tree():
+def tree(group_id=None):
     """フォルダ + その中のリスト + 未分類リストを、UI がそのまま描ける形で返す。"""
-    folders = all_folders()
-    lists = all_lists()
+    folders = all_folders(group_id)
+    lists = all_lists(group_id)
     by_folder = {}
     for l in lists:
         by_folder.setdefault(l.get("folder_id"), []).append(l)
@@ -429,14 +589,14 @@ def tree():
             "total_lists": len(lists), "total_items": sum(l["count"] for l in lists)}
 
 
-def find_saved(query="", usernames=None):
-    """全リスト横断で保存済みインフルエンサーを探す。
+def find_saved(query="", usernames=None, group_id=None):
+    """グループ内の全リスト横断で保存済みインフルエンサーを探す。
     query: ユーザー名・メモの部分一致。usernames: 完全一致で絞る。"""
     sql = ("SELECT i.*, l.id AS list_id, l.name AS list_name, f.name AS folder_name "
            "FROM list_items i "
            "JOIN lists l ON l.id = i.list_id "
            "LEFT JOIN folders f ON f.id = l.folder_id")
-    where, args = [], []
+    where, args = ["l.group_id IS ?"], [group_id]
     if query:
         where.append("(i.username LIKE ? OR i.note LIKE ?)")
         args += [f"%{query}%", f"%{query}%"]
@@ -463,22 +623,24 @@ def find_saved(query="", usernames=None):
     return out
 
 
-def saved_usernames():
-    """リストに入っている全ユーザー名。除外フィルタ用なので上限を掛けない
+def saved_usernames(group_id=None):
+    """グループ内リストに入っている全ユーザー名。除外フィルタ用なので上限を掛けない
     （find_saved は表示用に 300 件で切っているため、除外には使えない）。"""
     with connect() as c:
-        return [r["username"] for r in c.execute("SELECT DISTINCT username FROM list_items")]
+        return [r["username"] for r in c.execute(
+            "SELECT DISTINCT i.username FROM list_items i "
+            "JOIN lists l ON l.id=i.list_id WHERE l.group_id IS ?", (group_id,))]
 
 
-def saved_map(usernames):
+def saved_map(usernames, group_id=None):
     """{username: [リスト名, ...]} を返す。検索結果に『保存済み』を出すため。"""
     if not usernames:
         return {}
     out = {}
     with connect() as c:
         q = ("SELECT i.username, l.name FROM list_items i JOIN lists l ON l.id=i.list_id "
-             f"WHERE i.username IN ({','.join('?' * len(usernames))})")
-        for r in c.execute(q, list(usernames)):
+             f"WHERE l.group_id IS ? AND i.username IN ({','.join('?' * len(usernames))})")
+        for r in c.execute(q, [group_id] + list(usernames)):
             out.setdefault(r["username"], []).append(r["name"])
     return out
 
@@ -522,6 +684,16 @@ def list_items(list_id):
         })
         out.append(item)
     return out
+
+
+def item_group(item_id):
+    """アイテムが属するリストの group_id（所有権チェック用）。無ければ False を返す
+    （None は『グループ無し』の正当な値なので、不存在と区別する）。"""
+    with connect() as c:
+        row = c.execute(
+            "SELECT l.group_id FROM list_items i JOIN lists l ON l.id=i.list_id WHERE i.id=?",
+            (item_id,)).fetchone()
+    return row["group_id"] if row else False
 
 
 def update_item(item_id, note=None, status=None):

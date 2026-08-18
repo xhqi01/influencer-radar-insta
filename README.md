@@ -2,9 +2,10 @@
 
 Find Instagram influencers by hashtag, filter candidates on real account
 data, save people to shared named lists organized into folders, and export
-to CSV. Every account any search touches also accumulates in a free,
-browsable local database over time. Flask + SQLite, with an English /
-中文 / 日本語 UI.
+to CSV. Accounts and workgroups are built in, so a team can register,
+create a shared workspace, and collaborate on the same lists. Every
+account any search touches also accumulates in a free, browsable local
+database over time. Flask + SQLite, with an English / 中文 / 日本語 UI.
 
 [English](#english) · [中文](#中文) · [日本語](#日本語)
 
@@ -31,30 +32,34 @@ gunicorn -w 1 -k gthread -t 900 --threads 8 -b 0.0.0.0:$PORT app:app
 > that started them. With 2+ workers, a status poll can land on a worker
 > that knows nothing about the job, and the page spins forever.
 
-The server holds no API tokens. Each user pastes their own Apify token
-(required) and, optionally, an Anthropic key into the "API setup" dialog
-in the top right. Tokens live only in that user's browser (localStorage)
-and are sent per request; the server never stores them, and search costs
-bill to each user's own Apify account. **Because tokens travel in request
-headers, serve this over HTTPS in any deployment beyond localhost.**
+The server holds no Apify or Anthropic API tokens. Each user pastes their
+own Apify token (required) and, optionally, an Anthropic key into the "API
+setup" dialog in the top right. Tokens live only in that user's browser
+(localStorage) and are sent per request; the server never stores them,
+and search costs bill to each user's own Apify account. **Because tokens
+travel in request headers, serve this over HTTPS in any deployment beyond
+localhost.**
 
-There's no built-in authentication — put it behind a VPN, private network,
-or reverse-proxy auth if it shouldn't be publicly reachable.
+Login sessions are signed with a key stored in the database (or set
+`SECRET_KEY` as an env var to pin it yourself). Registration is open to
+anyone who can reach the URL — there's no invite-only signup gate — but a
+new account starts in no workgroup and can't see anyone's data until
+someone shares an invite code with them (see Workgroups below).
 
 ## Project layout
 
 ```
-app.py            Flask routes, search job handling, CSV export
+app.py            Flask routes, auth, search job handling, CSV export
 radar_core.py     Apify fetching, attribute inference, quality signals, filtering
-db.py             SQLite (jobs / lists / folders / account index / follower history)
+db.py             SQLite (users / groups / jobs / lists / folders / account index / follower history)
 templates/
   index.html      Full UI (three languages, i18n included)
 ```
 
 Everything lives in one `radar.db` file. Back it up by copying that file.
-Search jobs older than 30 days are pruned automatically on startup; lists,
-folders, and follower history (which growth-rate figures depend on) are
-never touched.
+Search jobs older than 30 days are pruned automatically on startup; users,
+groups, lists, folders, and follower history (which growth-rate figures
+depend on) are never touched.
 
 ---
 
@@ -62,40 +67,63 @@ never touched.
 
 ### What it does
 
-Search Instagram by hashtag, filter candidates on real account data
-(followers, engagement, account type, contact info, sponsored-post
-history, and more), save people to shared named lists organized into
-folders, and export to CSV. Every account any search has ever fetched also
-accumulates in a browsable database that costs nothing to query — normal
-use builds an influencer index as a side effect.
-
-### Using it
-
-1. **Search tab** — describe what you want in plain language and press
-   "Convert to filters"; the form below fills in (needs your own Anthropic
-   key, set in API setup). You can also skip that and fill the form
-   directly. Fill in a hashtag, or paste up to 15 usernames under "Check
-   specific accounts" to look up named accounts directly — that mode
-   ignores every other filter, since naming someone means you want to see
-   them.
-2. **Results** — click a column header to sort. The refine bar above the
-   table filters the current results instantly, without spending another
-   search. Save one person with the row's `+`, or tick several rows and use
-   the bulk-save button. A dot next to each row shows a quality read —
-   hover it, or open the account, for what tripped it.
-3. **Lists tab** — lists can sit inside folders (e.g. a "Q3 campaign"
-   folder holding "home workout women" and "protein men"). Deleting a
-   folder never deletes what's inside — its lists move back to
-   Uncategorized. The search box above the folder tree searches every list
-   at once, by name or note. Each saved person gets a status (New /
-   Contacted / In talks / Approved / Passed) and a note, both saving as you
-   type. Anyone already saved shows a ✓ instead of `+` in search results,
-   so you don't double up.
-4. **Database tab** — every account ever fetched, browsable and searchable
-   for free. Click any account (here or in results) for a detail panel: a
-   follower-trend chart built from this tool's own observation history,
-   quality flags, which lists they're in, and similar accounts ranked by
-   shared hashtags and content overlap.
+- **Hashtag search**, with up to 5 tags at once and a choice between
+  **union** (anyone who posted under any of the tags) and **intersect**
+  (only accounts with posts under every tag — narrower, more targeted).
+  An AI box also converts a plain-language brief into the filter form,
+  including picking union vs. intersect from phrasing like "posts about
+  A and B" vs. "either A or B."
+- **Direct account lookup** — paste up to 15 usernames to check specific
+  people instead of discovering new ones; this mode ignores every other
+  filter, since naming someone means you want to see them regardless of
+  follower count or activity.
+- **Filtering on real account data**: followers, following, engagement
+  rate (computed from the account's own recent posts, not the ones
+  sourced from the hashtag search, which skew high), last-active date,
+  account type, verified status, contact email, sponsored-post history,
+  average Reel views, and post count.
+- **Estimated attributes** (gender, age, content category, region,
+  narration) with a confidence mark and, optionally, AI-assisted
+  inference — see the reliability table below for what's real vs. guessed.
+- **Quality flag** — a heuristic pattern-match on public signals (see
+  Disclaimer) shown as a colored dot per row, with the specific signals
+  that tripped it visible in the account detail panel.
+- **Avatars** — every result and database row shows the account's
+  profile picture; expired or blocked image links fall back to a
+  letter placeholder automatically.
+- **Sortable results table** with an instant refine bar (filters the
+  current results without spending another search) and bulk or
+  single-row save.
+- **Lists and folders** — save people to named lists, group lists into
+  folders, move lists between folders, and search across every list at
+  once by name or note. Each saved person gets a status (New / Contacted
+  / In talks / Approved / Passed) and a note, both saving as you type.
+  Anyone already saved shows a ✓ instead of `+` in search results, and
+  an "exclude already-saved" toggle keeps repeat searches from
+  resurfacing people you've already logged.
+- **Accumulating account database** — every account any search has ever
+  fetched, browsable and searchable for free (zero Apify cost). Each
+  entry tracks how many hashtags it's been seen under, how many times,
+  and a follower-trend chart built from your own observation history
+  (needs at least two searches on different days to show anything).
+  Clicking any account opens a detail panel with similar accounts ranked
+  by shared hashtags and content overlap.
+- **CSV export**, per search job or per list, with a matched-hashtags
+  column when a multi-tag search was used.
+- **Accounts and workgroups** — register with a username and password;
+  create a workgroup or join one with an invite code. Lists and folders
+  are scoped to the active workgroup and invisible to anyone outside it;
+  the accumulated account database and follower history are shared by
+  everyone (they're public Instagram data, not any one group's work
+  product). A person can belong to multiple groups and switch between
+  them from the top bar. The invite code lives in the group management
+  dialog, copyable with one click. The first workgroup ever created on a
+  given deployment automatically adopts any lists and folders that
+  existed before workgroups were introduced, so upgrading an existing
+  deployment doesn't strand old data.
+- **Three-language UI** (English / 中文 / 日本語), switchable anytime
+  from the top bar, including AI-generated content like inferred content
+  categories.
 
 ### Field reliability
 
@@ -153,6 +181,11 @@ explicitly instead of showing inputs that quietly do nothing.
 - **The server holds no tokens and takes no responsibility for usage
   costs.** Each user's Apify (and optional Anthropic) spend is billed to
   their own account under their own responsibility.
+- **There's no invite-only signup gate and no rate limiting on login.**
+  Anyone who can reach the URL can create an account, though a fresh
+  account can't see any group's data without an invite code. Treat the
+  URL as semi-private, or put a reverse proxy in front, if that's not
+  acceptable for your deployment.
 
 ### Cost
 
@@ -167,28 +200,40 @@ untick "Use AI inference" to skip that cost.
 
 ### 这个工具做什么
 
-按话题标签搜索 Instagram，用真实账号数据筛选候选人（粉丝数、互动率、账号
-类型、联系方式、广告合作历史等），把人存进按文件夹分组的共享名单，导出
-CSV。历次搜索抓到的每个账号还会自动积累成一个可免费浏览的数据库——正常
-使用的副产品就是越来越大的达人索引。
-
-### 使用方式
-
-1. **搜索标签页** — 用大白话描述需求，点"转换为条件"（需要在 API 设置里填
-   自己的 Anthropic 密钥），下面表单自动填好；也可以跳过直接填表单。填话题
-   标签搜索，或者在"直接查指定账号"里填最多15个用户名——这个模式会忽略所有
-   其他筛选条件，因为指名要看的人就该出现在结果里。
-2. **结果** — 点表头排序。上方筛选栏对当前结果即时生效，不重新花钱搜索。
-   点行尾 `+` 存单人，或勾选多行批量保存。每行的小圆点是质量提示，鼠标悬停
-   或点进账号详情看具体触发了什么。
-3. **名单标签页** — 名单可以放进文件夹（比如"Q3 活动"文件夹装"居家健身
-   女生"和"蛋白粉男生"）。删除文件夹不会删掉里面的名单，会回到未分类。
-   文件夹树上方的搜索框跨所有名单搜，按名字或备注。每个存过的人有状态
-   （待处理／已联系／洽谈中／已确定／已否决）和备注，输入即自动保存。搜索
-   结果里已存过的人显示 ✓ 而不是 `+`，避免重复联系。
-4. **数据库标签页** — 历次抓到的所有账号，免费浏览搜索。点任何账号（这里
-   或搜索结果里）弹出详情：自己观测历史画的粉丝趋势图、质量信号、所在名单、
-   按共同标签和内容重合度排的类似账号。
+- **话题标签搜索**，一次最多输入5个标签，可选**并集**（任一标签下发过帖就算）
+  或**交集**（每个标签下都发过帖的人才算，范围更窄更精准）。AI 输入框能把大白话
+  需求转换成筛选表单，包括根据"发过A和B"还是"A或B都行"这类措辞自动判断该用
+  并集还是交集。
+- **直接查指定账号** — 填最多15个用户名，直接查这些人而不是发现新账号；这个
+  模式会忽略其他所有筛选条件，因为指名要看的人就该出现，不管粉丝数或活跃度。
+- **基于真实账号数据筛选**：粉丝数、关注数、互动率（用账号自己最新的帖子算，
+  不用话题标签抓到的帖子，那些数据偏高）、最后活跃时间、账号类型、认证状态、
+  联系邮箱、广告合作历史、Reel 平均播放、发帖数。
+- **推断属性**（性别、年龄、内容方向、地区、有无讲解），带可信度标记，可选
+  AI 辅助推断——具体哪些是真实数据、哪些是推测，见下方可信度表格。
+- **质量标记** — 基于公开信号的启发式模式匹配（见免责声明），每行显示成一个
+  彩色圆点，具体触发了哪些信号可以在账号详情面板里看到。
+- **头像** — 搜索结果和数据库里每一行都显示账号头像；图片链接过期或被拦截时
+  自动切换成显示首字母的占位图。
+- **可排序的结果表**，配合即时筛选栏（对当前结果生效，不用重新花钱搜索），
+  支持批量或单条保存。
+- **名单和文件夹** — 把人存进有名字的名单，名单可以归进文件夹，名单能在文件夹
+  间移动，还能跨所有名单一次性按名字或备注搜索。每个存过的人有状态（待处理／
+  已联系／洽谈中／已确定／已否决）和备注，输入即自动保存。搜索结果里已存过的
+  人显示 ✓ 而不是 `+`；"排除已保存"开关能让重复搜索不再冒出已经记录过的人。
+- **持续积累的账号数据库** — 历次搜索抓到的每个账号都会免费存下来（不消耗
+  Apify 额度），可浏览可搜索。每条记录追踪它出现过几个标签、出现过几次，还有
+  用自己观测历史画的粉丝趋势图（至少要隔天搜两次才会出数据）。点开任意账号会
+  弹出详情面板，包含按共同标签和内容重合度排序的类似账号。
+- **CSV 导出**，可按单次搜索或按名单导出，多标签搜索时会带一列"匹配到的标签"。
+- **账号与工作小组** — 用用户名和密码注册；创建工作小组，或者用邀请码加入别人
+  的小组。名单和文件夹按当前所在的小组隔离，组外的人完全看不到；但积累的账号
+  数据库和粉丝历史是全体共享的（那是公开的 Instagram 数据，不是某个小组的
+  工作成果）。一个人可以属于多个小组，在顶栏随时切换。邀请码在小组管理弹窗里，
+  一键复制。**系统里第一个被创建的小组会自动接收小组功能上线之前就存在的
+  名单和文件夹**，所以给已经在用的部署升级不会丢老数据。
+- **三语界面**（English／中文／日本語），顶栏随时切换，包括 AI 生成的内容
+  分类等推断结果也会跟着语言切换。
 
 ### 各字段可信度
 
@@ -236,6 +281,10 @@ Instagram 不经创作者本人授权、不对接入合作的平台开放这些�
   信息，用之前请自行核实。
 - **服务器不存任何 token，也不为使用产生的费用负责。** 每个人的 Apify（和可选
   的 Anthropic）花费记在各自账户下，由各自负责。
+- **注册没有邀请码门槛，登录也没有防暴力破解限速。** 只要能访问到这个网址，
+  任何人都能注册账号——不过新注册的账号在拿到邀请码之前看不到任何小组的
+  数据。如果这个开放程度不符合你的部署场景，可以把网址当半私密处理，或者
+  在前面加一层反向代理限制访问。
 
 ### 成本
 
@@ -249,34 +298,53 @@ Apify 按用量计费：一次话题标签抓取 + 找到的每个账号各一�
 
 ### このツールでできること
 
-ハッシュタグで Instagram を検索し、実データ（フォロワー数、エンゲージメント率、
-アカウントタイプ、連絡先、PR投稿履歴など）で絞り込み、フォルダ分けした共有
-リストに保存し、CSV に書き出す。過去の検索で取得した全アカウントは無料で
-閲覧・検索できるデータベースとして自動的に蓄積されていく——普段使いの
-副産物としてインフルエンサー索引が育つ。
-
-### 使い方
-
-1. **検索タブ** — やりたいことをそのまま書いて「条件に変換」を押す（API設定
-   で自分の Anthropic キーが必要）。下のフォームに自動で入る。使わず直接
-   フォームに入力してもよい。ハッシュタグを入れるか、「特定アカウントを
-   直接チェック」に最大15件のユーザー名を入れると、その人たちだけを直接
-   取得する——このモードは他の全フィルタを無視する。指名した人は必ず見たい
-   はずだから。
-2. **結果** — 表のヘッダをクリックで並び替え。上の絞り込み欄はその場で効き、
-   検索を再実行しない（1回ごとに費用がかかるので重要）。行の `+` で個別保存、
-   チェックを入れて一括保存も可能。各行の丸印は品質の目安——ホバーするか
-   アカウント詳細を開くと何が引っかかったか分かる。
-3. **リストタブ** — リストはフォルダにまとめられる（例：「Q3 キャンペーン」
-   フォルダに「宅トレ女子」「プロテイン男子」）。フォルダを削除しても中の
-   リストは消えず、未分類に戻るだけ。フォルダツリー上の検索欄は全リスト
-   横断で、名前やメモから探せる。保存した人にはステータス（未対応／連絡済／
-   交渉中／採用／見送り）とメモが付けられ、入力すると自動保存。検索結果では
-   保存済みの人が `+` ではなく ✓ になり、二重連絡を防げる。
-4. **データベースタブ** — 過去に取得した全アカウントを無料で閲覧・検索。
-   アカウントをクリック（ここでも検索結果でも）すると詳細パネルが開く：
-   自前の観測履歴から描いたフォロワー推移グラフ、品質シグナル、入っている
-   リスト、共通タグと内容の重なりで並べた類似アカウント。
+- **ハッシュタグ検索**、一度に最大5個のタグを指定でき、**和集合**（どれか1つの
+  タグに投稿があれば対象）と**積集合**（全タグに投稿がある人だけ。より絞られて
+  精度が高い）を切り替えられる。AI 入力欄は自由文の要望をそのままフィルター
+  フォームに変換し、「AもBも投稿してる人」「AかBどちらでもいい」のような
+  言い回しから和集合／積集合も自動で判定する。
+- **特定アカウントの直接チェック** — 最大15件のユーザー名を入力して、新規発掘
+  ではなく指名した人だけを直接取得する。このモードは他の全フィルタを無視する
+  ——指名した人はフォロワー数や活動状況に関わらず必ず見たいはずだから。
+- **実データによる絞り込み**：フォロワー数、フォロー数、エンゲージメント率
+  （本人の最新投稿から算出。ハッシュタグ経由で拾った投稿は伸びた投稿に偏る
+  ため使わない）、最終活動日、アカウントタイプ、認証状態、連絡先メール、
+  PR・タイアップ投稿履歴、リール平均再生数、投稿数。
+- **推定属性**（性別・年齢・投稿内容・地域・ナレーション有無）に確度マーク付き。
+  AI による推定補正も任意で利用可能——どこまでが実データでどこからが推測かは
+  下記の信頼度表を参照。
+- **品質マーク** — 公開情報のパターン照合によるヒューリスティック（下記免責
+  事項を参照）を色付きドットで各行に表示。具体的にどの信号が引っかかったかは
+  アカウント詳細パネルで確認できる。
+- **アバター** — 検索結果とデータベースの各行にプロフィール画像を表示。画像
+  URL が期限切れ・ブロックされている場合は自動的に頭文字のプレースホルダに
+  切り替わる。
+- **並び替え可能な結果表**と即時絞り込みバー（現在の結果に即座に効き、検索を
+  再実行しない＝再課金しない）、一括・個別保存に対応。
+- **リストとフォルダ** — 名前付きリストに保存し、リストをフォルダにまとめ、
+  フォルダ間で移動でき、全リストを横断して名前やメモで検索できる。保存した
+  人にはステータス（未対応／連絡済／交渉中／採用／見送り）とメモが付けられ、
+  入力すると自動保存。検索結果では保存済みの人が `+` ではなく ✓ になり、
+  「保存済みを除外」を有効にすれば再検索で同じ人が何度も出てくるのを防げる。
+- **蓄積型アカウントデータベース** — 過去の検索で取得した全アカウントが無料
+  （Apify 消費ゼロ）で閲覧・検索できる形で自動蓄積される。各アカウントは何個
+  のハッシュタグで何回見つかったかを記録し、自前の観測履歴から描いたフォロワー
+  推移グラフも持つ（別日に2回以上検索して初めてグラフが出る）。任意のアカウント
+  をクリックすると、共通タグと内容の重なりで並べた類似アカウントを含む詳細
+  パネルが開く。
+- **CSV エクスポート**、検索ジョブ単位・リスト単位のどちらも可能。複数タグで
+  検索した場合は「マッチしたハッシュタグ」列も付く。
+- **アカウントとワークグループ** — ユーザー名とパスワードで登録し、ワークグループ
+  を作成するか招待コードで参加する。リストとフォルダはアクティブなグループに
+  限定され、グループ外からは一切見えない。一方、蓄積されるアカウントデータベース
+  とフォロワー履歴は全員で共有される（公開の Instagram データであり、特定
+  グループの成果物ではないため）。1人が複数グループに所属し、トップバーから
+  いつでも切り替え可能。招待コードはグループ管理ダイアログにあり、ワンクリック
+  でコピーできる。**そのデプロイで最初に作られたワークグループは、グループ機能
+  導入前から存在していたリストとフォルダを自動的に引き取る**ため、既存の
+  デプロイをアップグレードしても古いデータが迷子にならない。
+- **3言語 UI**（English／中文／日本語）、トップバーからいつでも切り替え可能。
+  AI が生成する内容分類などの推定結果も切り替えた言語に追従する。
 
 ### データの信頼度
 
@@ -331,6 +399,11 @@ Apify 按用量计费：一次话题标签抓取 + 找到的每个账号各一�
 - **サーバーはトークンを一切保持せず、利用に伴う費用についても責任を負わない。**
   各利用者の Apify（および任意で使う Anthropic）の利用料は、各自のアカウントに
   それぞれの責任で課金される。
+- **登録に招待コードのゲートは無く、ログインにもブルートフォース対策の
+  レート制限は無い。** URL にアクセスできれば誰でもアカウントを作成できる
+  （ただし新規アカウントは招待コードを受け取るまでどのグループのデータも
+  見えない）。この開放度がデプロイ環境に合わない場合は、URL を半非公開として
+  扱うか、手前にリバースプロキシでアクセス制限を掛けること。
 
 ### コスト
 
